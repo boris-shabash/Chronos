@@ -1,3 +1,4 @@
+import chronos_utils
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,9 +8,10 @@ import plotly
 import plotly.graph_objs as go
 
 import torch
-from torch.optim import SGD, Rprop
 import pyro
 import pyro.distributions as dist
+from torch.optim import SGD, Rprop
+from torch.distributions import constraints
 
 
 # We will use Markov Chain Monte Carlo (MCMC) methods here, specifically the No U-Turn Sampler (NUTS)
@@ -18,7 +20,7 @@ from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
 from pyro.infer.autoguide import AutoDelta
 
-from torch.distributions import constraints
+
 
 import warnings
 import logging
@@ -57,7 +59,7 @@ class Chronos:
     def transform_data_(self, data):
         '''
             A function to grab the raw data with a timestamp and a target column and
-            add seasonality to the data using sine and cosine combinations.
+            add seasonality to the data using sine and cosine combinations. 
         '''
         # make a copy to avoid side effects of changing the origina df
         # and convert datetime column into time in days. This helps convergence
@@ -329,6 +331,20 @@ class Chronos:
     def get_trend(self):
         pass
     ##################################################################
+    def compute_seasonality(self, param_pairs, numeric_values, cycle_period):
+        seasonality = np.zeros_like(numeric_values, dtype=np.float64)
+
+
+        for i, pair in enumerate(param_pairs):
+            cycle_order = i+1
+            sin_coef = pair[0]
+            cosin_coef = pair[1]
+            
+            cycle_pos = cycle_order * 2 * math.pi * numeric_values/cycle_period
+            seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
+
+        return seasonality
+    ##################################################################
     def get_weekly_seasonality(self):
         if (self.method_ == "MAP"):
             return self.get_weekly_seasonality_point('AutoDelta.betas')
@@ -337,32 +353,51 @@ class Chronos:
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ##################################################################
+    def get_seasonal_params(self, param_name, seasonality_name):
+        seasonal_params = []
+        for i, param in enumerate(pyro.param(param_name)):
+            if (seasonality_name in self.X_names[i]):
+                seasonal_params.append(param.item())
+                
+        seasonal_params = np.array(seasonal_params).reshape(-1, 2)
+
+        return seasonal_params
+    ##################################################################
+    def get_seasonal_plotly_figure(self, seasonality_df):
+
+        data_trace = go.Scatter(x=seasonality_df['X'], 
+                                y=seasonality_df['Y'], 
+                                mode="lines+markers",
+                                marker=dict(color='Green', symbol="diamond"),
+                                line=dict(width=3))
+
+        trace_0 = go.Scatter(x=seasonality_df['X'],
+                             y=[0]*seasonality_df.shape[0],
+                             mode="lines",
+                             line=dict(width=3, color="Black"))
+        fig = go.Figure(
+            data=[data_trace, trace_0])
+
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(showgrid=False)
+
+        return fig
+    ##################################################################
     def get_weekly_seasonality_point(self, param_name):
         '''
             0 = Monday
         '''
 
-        weekly_params = []
-        for i, param in enumerate(pyro.param(param_name)):
-            if ("weekly" in self.X_names[i]):
-                weekly_params.append(param.item())
-                
-        weekly_params = np.array(weekly_params).reshape(-1, 2)
+        weekly_params = self.get_seasonal_params(param_name, "weekly")
         
-        weekdays = np.arange(0, 7, 1)
-        seasonality = np.zeros_like(weekdays, dtype=np.float64)
-        
-        for i, pair in enumerate(weekly_params):
-            cycle_order = i+1
-            sin_coef = pair[0]
-            cosin_coef = pair[1]
-            
-            cycle_pos = cycle_order * 2 * math.pi * weekdays/7
-            seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
+        weekdays_numeric = np.arange(0, 7, 1)
+        weekdays = chronos_utils.weekday_names_
+        seasonality = self.compute_seasonality(weekly_params, weekdays_numeric, 7)
             
             
-        weekly_seasonality = pd.DataFrame({"Weekday": weekdays,
-                                           "Value": seasonality})
+        weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
+                                           "Label": weekdays,
+                                           "Y": seasonality})
         
         return weekly_seasonality
     
@@ -378,21 +413,13 @@ class Chronos:
     ##################################################################
     def plot_weekly_seasonality_plotly(self):
         weekly_seasonality = self.get_weekly_seasonality()
-        weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        fig = go.Figure(
-            data=[go.Scatter(x=weekdays, 
-                             y=weekly_seasonality['Value'], 
-                             mode="lines+markers",
-                             marker=dict(color='Green', symbol="diamond"),
-                             line=dict(width=3))],
-            layout=dict(title=dict(text="Weekly Seasonality", x = 0.5),
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(255,255,255,255)')
-        )
 
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=False)
-        fig.update_layout(xaxis_range=["Monday", "Sunday"])
+        fig = self.get_seasonal_plotly_figure(weekly_seasonality)
+
+        fig.update_layout(xaxis=dict(tickmode = 'array', 
+                                     tickvals = weekly_seasonality['X'],
+                                     ticktext = weekly_seasonality['Label']),
+                          title=dict(text="Weekly Seasonality", x = 0.5))
         fig.show()
 
     ##################################################################
@@ -406,28 +433,15 @@ class Chronos:
     ##################################################################
     def get_monthly_seasonality_point(self, param_name):
 
-        monthly_params = []
+        monthly_params = self.get_seasonal_params(param_name, "monthly")
         
-        for i, param in enumerate(pyro.param(param_name)):
-            if ("monthly" in self.X_names[i]):
-                monthly_params.append(param.item())
-                
-        monthly_params = np.array(monthly_params).reshape(-1, 2)
-        
-        monthdays = np.arange(0, 31, 1)
-        seasonality = np.zeros_like(monthdays, dtype=np.float64)
-        
-        for i, pair in enumerate(monthly_params):
-            cycle_order = i+1
-            sin_coef = pair[0]
-            cosin_coef = pair[1]
+        monthdays_numeric = np.arange(0, 31, 1)
+        monthday_names = chronos_utils.monthday_names_
+        seasonality = self.compute_seasonality(monthly_params, monthdays_numeric, 31)
             
-            cycle_pos = cycle_order * 2 * math.pi * monthdays/30
-            seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
-            
-            
-        monthly_seasonality = pd.DataFrame({"Monthday": monthdays+1,
-                                            "Value": seasonality})
+        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
+                                            "Label": monthday_names,
+                                            "Y": seasonality})
         
         return monthly_seasonality
     ##################################################################
@@ -442,21 +456,13 @@ class Chronos:
     def plot_monthly_seasonality_plotly(self):
         monthly_seasonality = self.get_monthly_seasonality()
         
-        
-        fig = go.Figure(
-            data=[go.Scatter(x=monthly_seasonality['Monthday'], 
-                             y=monthly_seasonality['Value'],
-                             mode="lines+markers",
-                             marker=dict(color='Green', symbol="diamond", size=10),
-                             line=dict(width=3))],
-            layout=dict(title=dict(text="Monthly Seasonality", x = 0.5),
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(255,255,255,255)')
-        )
+        fig = self.get_seasonal_plotly_figure(monthly_seasonality)
 
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=False)
-        fig.update_layout(xaxis_range=[0, 32])
+        fig.update_layout(xaxis_range=[-0.2, 30.2])
+        fig.update_layout(xaxis=dict(tickmode = 'array', 
+                                     tickvals = monthly_seasonality['X'],
+                                     ticktext = monthly_seasonality['Label']),
+                          title=dict(text="Monthly Seasonality", x = 0.5))    
         fig.show()
     ##################################################################
     def get_yearly_seasonality(self):
@@ -469,28 +475,16 @@ class Chronos:
     ##################################################################
     def get_yearly_seasonality_point(self, param_name):
 
-        yearly_params = []
-
-        for i, param in enumerate(pyro.param(param_name)):
-            if ("yearly" in self.X_names[i]):
-                yearly_params.append(param.item())
-                                
-        yearly_params = np.array(yearly_params).reshape(-1, 2)
+        yearly_params = self.get_seasonal_params(param_name, "yearly")
         
-        yeardays = np.arange(0, 366, 1)
-        seasonality = np.zeros_like(yeardays, dtype=np.float64)
-        
-        for i, pair in enumerate(yearly_params):
-            cycle_order = i+1
-            sin_coef = pair[0]
-            cosin_coef = pair[1]
-            
-            cycle_pos = cycle_order * 2 * math.pi * yeardays/366
-            seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
+        yeardays_numeric = np.arange(0, 366, 1)
+        yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
+        seasonality = self.compute_seasonality(yearly_params, yeardays_numeric, 366)
             
             
-        yearly_seasonality = pd.DataFrame({"Yearday": yeardays+1,
-                                           "Value": seasonality})
+        yearly_seasonality = pd.DataFrame({"X": yearly_dates,
+                                           "Label": yearly_dates,
+                                           "Y": seasonality})
         
         return yearly_seasonality
     
@@ -498,34 +492,23 @@ class Chronos:
     def plot_yearly_seasonality(self):
         yearly_seasonality = self.get_yearly_seasonality()
         plt.figure(figsize=(15,5))
-        plt.plot(yearly_seasonality['Yearday'], yearly_seasonality['Value'])
+        plt.plot(yearly_seasonality['X'], yearly_seasonality['Y'])
         plt.axhline(0.0, c="black")
         plt.xlim(1.0, 366.0)
-        plt.show();
+        plt.show()
         
     ##################################################################
     def plot_yearly_seasonality_plotly(self):
         yearly_seasonality = self.get_yearly_seasonality()
-        yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
-        #print(yearly_dates)
 
-        fig = go.Figure(
-            data=[go.Scatter(x=yearly_dates, 
-                             y=yearly_seasonality['Value'],
-                             mode="lines+markers",
-                             marker=dict(color='Green', symbol="circle"),
-                             line=dict(width=4))],
-            layout=dict(title=dict(text="Yearly Seasonality", x = 0.5),
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(255,255,255,255)')
-        )
-
-        fig.update_xaxes(dtick="M1", tickformat="%b", showgrid=False)
-        fig.update_yaxes(showgrid=False)
         
-        # https://github.com/facebook/prophet/blob/20f590b7263b540eb5e7a116e03360066c58de4d/python/fbprophet/plot.py#L933
-        fig.update_layout(xaxis=go.layout.XAxis(tickformat = "%B %e", type='date'), 
-                          xaxis_range=["2019-12-30", "2021-01-02"])
+        fig = self.get_seasonal_plotly_figure(yearly_seasonality)
+        
+        fig.update_xaxes(dtick="M1", tickformat="%b", showgrid=False)
+        # https://github.com/facebook/prophet/blob/20f590b7263b540eb5e7a116e03360066c58de4d/python/fbprophet/plot.py#L933        
+        fig.update_layout(xaxis=go.layout.XAxis(tickformat = "%B %e", 
+                                                type='date'), 
+                          xaxis_range=["2019-12-30", "2021-01-02"],
+                          title=dict(text="Yearly Seasonality", x = 0.5))
+        
         fig.show()
-
-    
