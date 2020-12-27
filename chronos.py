@@ -1,8 +1,21 @@
+'''
+There should be a few specs for this method:
+
+* Should have a scikit-learn like interface (fit, predict)
+* Should have support for MLE, MAP, MCMC, and SVI
+* Parameters should be easy to grab
+* Should support arbitrary residual distributions
+* Should support censored data
+
+'''
+
+
 import chronos_utils
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import datetime
 
 import plotly
 import plotly.graph_objs as go
@@ -135,11 +148,13 @@ class Chronos:
                 print("Employing Maximum Likelihood Estimation")
                 self.model = self.model_MLE_
                 self.guide = self.guide_MLE_
+                self.param_name_ = "betas"
                 
             elif (self.method_ == "MAP"):
                 print("Employing Maximum A Posteriori")
                 self.model = self.model_MAP_
                 self.guide = AutoDelta(self.model)
+                self.param_name_ = "AutoDelta.betas"
                 
             # This raises a trace warning so we turn that off. 
             with warnings.catch_warnings():
@@ -165,7 +180,7 @@ class Chronos:
         optimizer = Rprop
         scheduler = pyro.optim.ExponentialLR({'optimizer': optimizer, 
                                               'optim_args': {'lr': self.lr_}, 
-                                              'gamma': 0.1})
+                                              'gamma': 0.5})
         
         self.svi_ = SVI(model, 
                         guide, 
@@ -295,9 +310,9 @@ class Chronos:
                                         "yhat_lower": samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
                                         "yhat_upper": samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy()})
             
-            predictions['y'] = y.detach().numpy()
+            predictions[self.target_col_] = y.detach().numpy()
             predictions[self.time_col_] = data[self.time_col_]
-            return predictions[[self.time_col_, 'y', 'yhat', 'yhat_upper', 'yhat_lower']]
+            return predictions[[self.time_col_, self.target_col_, 'yhat', 'yhat_upper', 'yhat_lower']]
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.method_}")
 
@@ -401,6 +416,59 @@ class Chronos:
         
         return weekly_seasonality
     
+    ##################################################################
+    def plot_components(self, predictions, residuals=False):
+        
+        fig, axs = plt.subplots(5, 1, figsize=(15, 15))
+
+        const, growth = pyro.param(self.param_name_).detach().numpy()[:2]
+        trend_X = predictions[self.time_col_]
+        trend_Y = growth * trend_X.values.astype(float)/(1e9*60*60*24) + const
+        predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
+        axs[0].plot(trend_X, trend_Y, linewidth=3, c="green")
+        axs[0].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
+        axs[0].set_xlabel('Date', size=18)
+        axs[0].set_ylabel('Growth', size=18)
+
+
+        weekly_seasonality = self.get_weekly_seasonality()
+        axs[1].plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
+        axs[1].axhline(0.0, c="black", linestyle="--")
+        axs[1].set_xticks(weekly_seasonality['X'].values)
+        axs[1].set_xticklabels(weekly_seasonality['Label'].values)
+        axs[1].set_xlim(-0.1, 6.1)
+        axs[1].set_xlabel('Weekday', size=18)
+        axs[1].set_ylabel('Seasonality', size=18)
+
+        monthly_seasonality = self.get_monthly_seasonality()
+        axs[2].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
+        axs[2].axhline(0.0, c="black", linestyle="--")
+        axs[2].set_xticks(monthly_seasonality['X'].values[::9])
+        axs[2].set_xticklabels(monthly_seasonality['Label'].values[::9])
+        axs[2].set_xlim(-0.2, 30.2)
+        axs[2].set_xlabel('Day of Month', size=18)
+        axs[2].set_ylabel('Seasonality', size=18)
+
+        yearly_seasonality = self.get_yearly_seasonality()
+        axs[3].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
+        axs[3].axhline(0.0, c="black", linestyle="--")
+        axs[3].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
+        axs[3].set_xlabel('Day of Year', size=18)
+        axs[3].set_ylabel('Seasonality', size=18)
+
+        
+        X = predictions[self.time_col_]
+        Y = predictions[self.target_col_]
+        Y_hat = predictions['yhat']
+        Y_diff = Y - Y_hat
+        
+        axs[4].scatter(trend_X, Y_diff, c="green", s=4, alpha=0.2)
+        axs[4].set_xlabel('Date', size=18)
+        axs[4].set_ylabel('Residuals', size=18)
+
+        plt.subplots_adjust(hspace=0.5)
+        plt.savefig("Seasonality Plots.png", dpi=96*4)
+        plt.show()
     ##################################################################
     def plot_weekly_seasonality(self):
         weekly_seasonality = self.get_weekly_seasonality()
