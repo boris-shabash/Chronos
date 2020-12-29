@@ -10,7 +10,8 @@ my_ts_data['ds'] = pd.to_datetime(my_ts_data['ds'])
 
 
 
-my_chronos = Chronos(method="MAP", max_iter=1000, learning_rate=10.0, n_changepoints=20)
+my_chronos = Chronos(method="MAP", max_iter=1000, learning_rate=1.0, n_changepoints=25)
+
 my_chronos.fit(my_ts_data)
 future_df = my_chronos.make_future_dataframe(period=365)
 
@@ -33,7 +34,7 @@ plt.show()#'''
 
 #assert(False)
 
-my_chronos.plot_components(predictions)
+my_chronos.plot_components(predictions, figure_name="Complete plot.png")
 
 #my_chronos.plot_weekly_seasonality_plotly()
 #my_chronos.plot_monthly_seasonality_plotly()

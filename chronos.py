@@ -32,6 +32,7 @@ from pyro.infer import MCMC, NUTS
 from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
 from pyro.infer.autoguide import AutoDelta
+from pyro.infer.autoguide.initialization import init_to_sample, init_to_feasible
 
 
 
@@ -49,7 +50,7 @@ class Chronos:
                  method="MLE", 
                  time_col = "ds",
                  target_col="y", 
-                 n_changepoints = 6,
+                 n_changepoints = 20,
                  year_seasonality_order=10,
                  month_seasonality_order=5,
                  weekly_seasonality_order=3,
@@ -202,7 +203,7 @@ class Chronos:
             elif (self.method_ == "MAP"):
                 print("Employing Maximum A Posteriori")
                 self.model = self.model_MAP_
-                self.guide = AutoDelta(self.model)
+                self.guide = AutoDelta(self.model, init_loc_fn=init_to_feasible)
                 self.param_name_ = "AutoDelta.betas"
                 
             # This raises a trace warning so we turn that off. 
@@ -232,7 +233,7 @@ class Chronos:
         optimizer = Rprop
         scheduler = pyro.optim.ExponentialLR({'optimizer': optimizer, 
                                               'optim_args': {'lr': self.lr_}, 
-                                              'gamma': 0.5})
+                                              'gamma': 0.9})
         
         my_loss = JitTrace_ELBO()
         my_loss = Trace_ELBO()
@@ -317,20 +318,8 @@ class Chronos:
                                                    torch.full((self.n_changepoints_, ), 0.05)).to_event(1))
 
         #deltas = torch.where(torch.abs(deltas) < 0.01, torch.tensor(0.0), deltas)
-        #print(deltas)
-
-        #gammas = pyro.param("gamma", torch.zeros(self.n_changepoints_))     
-        #gammas = torch.zeros_like(deltas)     
+        
         gammas = -deltas * X_trend[self.changepoints.type(torch.int64)]
-        '''for i in range(gammas.shape[0]):
-            #one = (self.changepoints[i] - intercept_init - gammas[:i].sum())
-            #two = 1 - (slope_init + deltas[:i].sum())/(slope_init + deltas[:i+1].sum())
-            one = -self.changepoints[i]
-            two = deltas[:i+1].sum() + slope_init
-            gammas[i] = one * two
-        #print(gammas)#'''
-
-        #gammas = pyro.sample("gamma", dist.Delta(torch.ones(self.n_changepoints_)).to_event(1))
 
 
         slope = slope_init + torch.matmul(A, deltas)
@@ -354,23 +343,18 @@ class Chronos:
 
 
         trend = (slope * X_trend) + intercept
-        #trend = (slope_init + torch.matmul(A, deltas)) * X_trend + (torch.matmul(A, gammas) + intercept_init)
-        #print('trend', trend[self.changepoints[0]-2:self.changepoints[0]+2])
 
         pyro.deterministic("trend", trend)
-
-
 
         betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X_seasonality.size(1)), 
                                                   torch.full((X_seasonality.size(1),), 10.0)).to_event(1))
 
                                         
-        
         seasonality = X_seasonality.matmul(betas)
         
 
-        mu = trend + seasonality
-
+        linear_combo = trend + seasonality
+        mu = linear_combo
         
         
         sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
@@ -380,6 +364,7 @@ class Chronos:
         with pyro.plate("data", X_trend.size(0)):
             #pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            #pyro.sample('obs', dist.Gamma(shape, rate), obs=y)
             
         return mu
     
@@ -438,7 +423,6 @@ class Chronos:
             
 
             trend = samples['trend'].squeeze()[0, :]
-            print(trend.shape)
             predictions = pd.DataFrame({"yhat": torch.mean(samples['obs'], 0).detach().numpy(),
                                         "yhat_lower": samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
                                         "yhat_upper": samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy(),
@@ -549,9 +533,29 @@ class Chronos:
         return weekly_seasonality
     
     ##################################################################
-    def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0):
+    def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0, figure_name = None):
         
-        fig, axs = plt.subplots(5, 1, figsize=(15, 15))
+        plot_num = 3
+        if self.weekly_seasonality_order_ > 0:
+            plot_num += 1
+        if self.month_seasonality_order_ > 0:
+            plot_num += 1
+        if (self.year_seasonality_order_ > 0):
+            plot_num += 1
+
+
+
+        
+        fig, axs = plt.subplots(plot_num, 1, figsize=(15, 15))
+
+        current_axs = 0
+        axs[0].plot(predictions[self.time_col_], predictions['yhat'], c="green", label="predictions")
+        axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color="green", alpha=0.3)
+        axs[0].scatter(predictions[self.time_col_], predictions['y'], c="black", label="observed")
+        axs[0].set_xlabel("Date", size=16)
+        axs[0].set_ylabel("Values", size=16)
+        current_axs += 1
+
 
         const = pyro.param('AutoDelta.intercept').detach()
         growth = pyro.param('AutoDelta.trend_slope').detach()
@@ -559,7 +563,7 @@ class Chronos:
         trend_X = predictions[self.time_col_]
         trend_Y = predictions['trend'] #growth * trend_X.values.astype(float)/(1e9*60*60*24) + const
         predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
-        axs[0].plot(trend_X, trend_Y, linewidth=3, c="green")
+        axs[current_axs].plot(trend_X, trend_Y, linewidth=3, c="green")
         for index, changepoint in enumerate(self.changepoints):
             
             changepoint_as_index = int(changepoint.item())
@@ -567,36 +571,42 @@ class Chronos:
             changepoint_date_value = trend_X.iloc[changepoint_as_index]
 
             if (abs(changepoint_value) > changepoint_threshold):
-                axs[0].axvline(changepoint_date_value, c="black", linestyle="dotted")
-        axs[0].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
-        axs[0].set_xlabel('Date', size=18)
-        axs[0].set_ylabel('Growth', size=18)
+                axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")
+        axs[current_axs].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
+        axs[current_axs].set_xlabel('Date', size=18)
+        axs[current_axs].set_ylabel('Growth', size=18)
+        current_axs += 1
 
+        if (self.weekly_seasonality_order_ > 0):
+            weekly_seasonality = self.get_weekly_seasonality()
+            axs[current_axs].plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
+            axs[current_axs].axhline(0.0, c="black", linestyle="--")
+            axs[current_axs].set_xticks(weekly_seasonality['X'].values)
+            axs[current_axs].set_xticklabels(weekly_seasonality['Label'].values)
+            axs[current_axs].set_xlim(-0.1, 6.1)
+            axs[current_axs].set_xlabel('Weekday', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)
+            current_axs += 1
 
-        weekly_seasonality = self.get_weekly_seasonality()
-        axs[1].plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
-        axs[1].axhline(0.0, c="black", linestyle="--")
-        axs[1].set_xticks(weekly_seasonality['X'].values)
-        axs[1].set_xticklabels(weekly_seasonality['Label'].values)
-        axs[1].set_xlim(-0.1, 6.1)
-        axs[1].set_xlabel('Weekday', size=18)
-        axs[1].set_ylabel('Seasonality', size=18)
+        if (self.month_seasonality_order_ > 0):
+            monthly_seasonality = self.get_monthly_seasonality()
+            axs[current_axs].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
+            axs[current_axs].axhline(0.0, c="black", linestyle="--")
+            axs[current_axs].set_xticks(monthly_seasonality['X'].values[::9])
+            axs[current_axs].set_xticklabels(monthly_seasonality['Label'].values[::9])
+            axs[current_axs].set_xlim(-0.2, 30.2)
+            axs[current_axs].set_xlabel('Day of Month', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)
+            current_axs += 1
 
-        monthly_seasonality = self.get_monthly_seasonality()
-        axs[2].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
-        axs[2].axhline(0.0, c="black", linestyle="--")
-        axs[2].set_xticks(monthly_seasonality['X'].values[::9])
-        axs[2].set_xticklabels(monthly_seasonality['Label'].values[::9])
-        axs[2].set_xlim(-0.2, 30.2)
-        axs[2].set_xlabel('Day of Month', size=18)
-        axs[2].set_ylabel('Seasonality', size=18)
-
-        yearly_seasonality = self.get_yearly_seasonality()
-        axs[3].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
-        axs[3].axhline(0.0, c="black", linestyle="--")
-        axs[3].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
-        axs[3].set_xlabel('Day of Year', size=18)
-        axs[3].set_ylabel('Seasonality', size=18)
+        if (self.year_seasonality_order_ > 0):
+            yearly_seasonality = self.get_yearly_seasonality()
+            axs[current_axs].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
+            axs[current_axs].axhline(0.0, c="black", linestyle="--")
+            axs[current_axs].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
+            axs[current_axs].set_xlabel('Day of Year', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)
+            current_axs += 1
 
         
         X = predictions[self.time_col_]
@@ -604,12 +614,13 @@ class Chronos:
         Y_hat = predictions['yhat']
         Y_diff = Y - Y_hat
         
-        axs[4].scatter(trend_X, Y_diff, c="green", s=4, alpha=0.2)
-        axs[4].set_xlabel('Date', size=18)
-        axs[4].set_ylabel('Residuals', size=18)
+        axs[current_axs].scatter(trend_X, Y_diff, c="green", s=4, alpha=0.2)
+        axs[current_axs].set_xlabel('Date', size=18)
+        axs[current_axs].set_ylabel('Residuals', size=18)
 
         plt.subplots_adjust(hspace=0.5)
-        plt.savefig("Seasonality Plots.png", dpi=96*4)
+        if (figure_name is not None):
+            plt.savefig(figure_name, dpi=96*4)
         plt.show()
     ##################################################################
     def plot_weekly_seasonality(self):
