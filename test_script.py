@@ -10,7 +10,7 @@ my_ts_data['ds'] = pd.to_datetime(my_ts_data['ds'])
 
 
 
-my_chronos = Chronos(method="MAP", max_iter=1000, learning_rate=10.0, n_changepoints=25)
+my_chronos = Chronos(method="MLE", max_iter=100, learning_rate=10.0, n_changepoints=25)
 
 my_chronos.fit(my_ts_data)
 future_df = my_chronos.make_future_dataframe(period=365)

@@ -138,11 +138,11 @@ class Chronos:
         return X_trend, X_seasonality, y
         
         
-    def find_changepoint_positions(self, X_trend, changepoint_num, drop_first = True):
+    def find_changepoint_positions(self, X_trend, changepoint_num, min_value = None, drop_first = True):
         
         #changepoint_range = int(self.changepoint_range_ * X_trend.max())
-
-        min_value = X_trend.min().item()
+        if (min_value is None):
+            min_value = X_trend.min().item()
         max_value_in_data = X_trend.max().item() #* data_prop
 
         max_distance = (max_value_in_data - min_value) * self.changepoint_range_
@@ -161,7 +161,7 @@ class Chronos:
         
 
     def make_A_matrix(self, X_trend, changepoints):
-        A = torch.zeros((X_trend.shape[0], self.n_changepoints_))
+        A = torch.zeros((X_trend.shape[0], len(changepoints)))
 
         #print(X_trend)
 
@@ -269,7 +269,7 @@ class Chronos:
         
         for step in range(self.n_iter_):
             
-            loss = round(self.svi_.step(X_trend, X_seasonality, A, y)/y.shape[0], 4)
+            loss = round(self.svi_.step(X_trend, X_seasonality, A, self.changepoints, y)/y.shape[0], 4)
             
             if (step % print_interval == 0):
                 pct_done = round(100*(step+1)/self.n_iter_, 2)
@@ -282,14 +282,27 @@ class Chronos:
         print(f"{pct_done}% - ELBO loss: {loss}")
             
     ##################################################################
+    def combine_components(self, X_trend, X_seasonality, A, deltas, gammas):
+        pass
+    ##################################################################
     
-    def model_MLE_(self, X_trend, X_seasonality, A, y=None):     
+    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):     
         
         intercept_init = pyro.param("intercept", torch.tensor(0.0))
         slope_init = pyro.param("trend_slope", torch.tensor(0.0))
 
         deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
-        gammas = -deltas * self.changepoints
+
+        if (A.shape[1] > self.n_changepoints_):
+            extra_changepoint_num = A.shape[1] - self.n_changepoints_
+            future_laplace_scale = torch.abs(deltas).mean()
+
+            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((3,))
+
+            deltas = torch.cat([deltas, future_deltas])
+        
+    
+        gammas = -deltas * changepoints
 
         slope = slope_init + torch.matmul(A, deltas)
         intercept = intercept_init + torch.matmul(A, gammas)
@@ -327,7 +340,7 @@ class Chronos:
         
         
     
-    def guide_MLE_(self, X_trend, X_seasonality, A, y=None):
+    def guide_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):
         pass
     
     
@@ -341,7 +354,7 @@ class Chronos:
         return trend
     ##################################################################
     
-    def model_MAP_(self, X_trend, X_seasonality, A, y=None):
+    def model_MAP_(self, X_trend, X_seasonality, A, changepoints, y=None):
         
         
         intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0))
@@ -350,27 +363,32 @@ class Chronos:
         deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
                                                    torch.full((self.n_changepoints_, ), 0.05)).to_event(1))
 
+        
+        if (A.shape[1] > self.n_changepoints_):
+            extra_changepoint_num = A.shape[1] - self.n_changepoints_
+            #print(deltas)
+            future_laplace_scale = torch.abs(deltas).mean()
+            #print(future_laplace_scale)
+
+            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((3,))
+            #future_deltas_mask = torch.distributions.Bernoulli(self.changepoint_proportion).sample((3,))
+            #print(future_deltas)
+            #print(future_deltas_mask)
+
+            deltas = torch.cat([deltas, future_deltas])
+            #print(deltas)
+            #print(changepoints)
+
+            #assert(False)
+
         #deltas = torch.where(torch.abs(deltas) < 0.01, torch.tensor(0.0), deltas)
         
-        gammas = -deltas * self.changepoints
+    
+        gammas = -deltas * changepoints
 
 
         slope = slope_init + torch.matmul(A, deltas)
         intercept = intercept_init + torch.matmul(A, gammas)
-        
-
-        #print("slope", slope.shape)
-        '''print("#"*30)
-        
-        print("slope-init, k", slope_init)
-        print('intercept, m', intercept_init)
-        print("delta", deltas)
-        print("gammas", gammas)
-        print("changepoint", self.changepoints)
-        print(self.changepoints[0]-2, self.changepoints[0]+1)
-        print("t", self.changepoints[0]-2, self.changepoints[0]+2)
-        #print("A", )#'''
-        
         
 
 
@@ -438,8 +456,18 @@ class Chronos:
         X_trend, X_seasonality, y = self.transform_data_(data)
         future_changepoint_number = self.changepoint_proportion * (X_trend.max() - self.max_train_time)
         future_changepoint_number = round(future_changepoint_number.item())
-        print(future_changepoint_number)
+        #print(future_changepoint_number)
 
+        future_changepoint_positions = self.find_changepoint_positions(X_trend, 
+                                                                       future_changepoint_number, 
+                                                                       min_value = self.max_train_time, 
+                                                                       drop_first = False)
+
+        combined_changepoints = []
+        combined_changepoints.extend(self.changepoints)
+        combined_changepoints.extend(future_changepoint_positions)
+        combined_changepoints = torch.tensor(combined_changepoints)
+        #print(future_changepoint_positions)
 
         #assert(False)
         
@@ -457,8 +485,10 @@ class Chronos:
                                     num_samples=sample_number,
                                     return_sites=("obs", "trend")) 
 
-            A = self.make_A_matrix(X_trend, self.changepoints)
-            samples = predictive(X_trend, X_seasonality, A)
+            A = self.make_A_matrix(X_trend, combined_changepoints)
+            #print(A.shape)
+            #assert(False)
+            samples = predictive(X_trend, X_seasonality, A, combined_changepoints)
             
             
             space_on_each_side = (1.0 - ci_interval)/2.0
@@ -466,15 +496,25 @@ class Chronos:
             upper_ntile = int(len(samples['obs']) * (1.0 - space_on_each_side))
             
 
-            trend = samples['trend'].squeeze()[0, :]
+            trend_array = samples['trend'].squeeze()
+            trend = trend_array.mean(dim=0)
+            trend_upper = trend_array.max(dim=0).values
+            trend_lower = trend_array.min(dim=0).values
+
+            #print(trend_array)
+            #print(trend_upper.values)
             predictions = pd.DataFrame({"yhat": torch.mean(samples['obs'], 0).detach().numpy(),
                                         "yhat_lower": samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
                                         "yhat_upper": samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy(),
-                                        "trend": trend.detach().numpy()})
+                                        "trend": trend.detach().numpy(),
+                                        "trend_lower": trend_lower.detach().numpy(),
+                                        "trend_upper": trend_upper.detach().numpy()})
             
             predictions[self.target_col_] = y.detach().numpy()
             predictions[self.time_col_] = data[self.time_col_]
-            return predictions[[self.time_col_, self.target_col_, 'yhat', 'yhat_upper', 'yhat_lower', 'trend']]
+            return predictions[[self.time_col_, self.target_col_, 
+                                'yhat', 'yhat_upper', 'yhat_lower', 
+                                'trend', 'trend_upper', 'trend_lower']]
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.method_}")
 
@@ -600,14 +640,18 @@ class Chronos:
         axs[0].set_ylabel("Values", size=16)
         current_axs += 1
 
-
+        ########## TREND ########################################################################
         const = pyro.param(f'{self.param_prefix_}intercept').detach()
         growth = pyro.param(f'{self.param_prefix_}trend_slope').detach()
         #const, growth = pyro.param(self.param_name_).detach().numpy()[:2]
         trend_X = predictions[self.time_col_]
         trend_Y = predictions['trend']
-        predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
+
+        
+        
         axs[current_axs].plot(trend_X, trend_Y, linewidth=3, c="green")
+        axs[current_axs].fill_between(trend_X, predictions['trend_upper'], predictions['trend_lower'], color="green", alpha=0.3)
+
         for index, changepoint in enumerate(self.changepoints):
             
             changepoint_value = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
@@ -615,6 +659,9 @@ class Chronos:
 
             if (abs(changepoint_value) >= changepoint_threshold):
                 axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
+        
+        # Find the date where history ends and predictions start
+        predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
         axs[current_axs].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
         axs[current_axs].set_xlabel('Date', size=18)
         axs[current_axs].set_ylabel('Growth', size=18)
