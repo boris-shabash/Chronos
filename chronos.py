@@ -70,6 +70,9 @@ class Chronos:
         
         self.time_col_ = time_col
         self.target_col_ = target_col
+
+
+        self.ms_to_day_ratio_ = (1e9*60*60*24)
         
         
         
@@ -87,7 +90,7 @@ class Chronos:
         internal_data['yearday'] = internal_data[self.time_col_].dt.dayofyear - 1 # make days start at 0
         #display(internal_data)
         
-        internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/(1e9*60*60*24)
+        internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/self.ms_to_day_ratio_
         
         
         self.seasonality_cols_ = []
@@ -135,29 +138,40 @@ class Chronos:
         return X_trend, X_seasonality, y
         
         
-    def find_changepoint_positions(self, X_trend, start_time = 0, drop_first = False):
+    def find_changepoint_positions(self, X_trend, changepoint_num, drop_first = True):
         
-        changepoint_range = int(self.changepoint_range_ * X_trend.shape[0])
+        #changepoint_range = int(self.changepoint_range_ * X_trend.max())
+
+        min_value = X_trend.min().item()
+        max_value_in_data = X_trend.max().item() #* data_prop
+
+        max_distance = (max_value_in_data - min_value) * self.changepoint_range_
+        max_value = min_value + max_distance
 
         if (drop_first):
-            changepoints =  np.round(np.linspace(0, changepoint_range, self.n_changepoints_+1, dtype=np.float32))
+            changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num+1, dtype=np.float32))
             changepoints = changepoints[1:] # The first entry will always be 0, but we don't
                                             # want a changepoint right in the beginning
         else:
-            changepoints =  np.round(np.linspace(0, changepoint_range, self.n_changepoints_, dtype=np.float32))
+            changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num, dtype=np.float32))
 
-        print(changepoints)
-        return torch.tensor(changepoints, dtype=torch.float32)
+        changepoints = torch.tensor(changepoints, dtype=torch.float32)
+
+        return changepoints
         
 
-    def make_A_matrix(self, point_number, changepoints):
-        A = torch.zeros((point_number, self.n_changepoints_))
+    def make_A_matrix(self, X_trend, changepoints):
+        A = torch.zeros((X_trend.shape[0], self.n_changepoints_))
+
+        #print(X_trend)
 
         for t, row in enumerate(A):
             for j, col in enumerate(row):
-                if (changepoints[j] <= t):
+                if (changepoints[j] <= X_trend[t]):
                     A[t, j] = 1.0
 
+        #print(A)
+        #assert(False)
         return A
 
 
@@ -172,13 +186,14 @@ class Chronos:
         # Transform the data by adding seasonality
         #internal_data = self.transform_data_(data)
         X_trend, X_seasonality, y = self.transform_data_(data)
+
         self.changepoint_proportion = self.n_changepoints_/(X_trend.max() - X_trend.min())
         self.max_train_time = X_trend.max().item()
         
         
         
-        self.changepoints = self.find_changepoint_positions(X_trend)
-        A = self.make_A_matrix(X_trend.shape[0], self.changepoints)
+        self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_)
+        A = self.make_A_matrix(X_trend, self.changepoints)
 
         #print(self.changepoints)
         #print(A)
@@ -274,7 +289,7 @@ class Chronos:
         slope_init = pyro.param("trend_slope", torch.tensor(0.0))
 
         deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
-        gammas = -deltas * X_trend[self.changepoints.type(torch.int64)]
+        gammas = -deltas * self.changepoints
 
         slope = slope_init + torch.matmul(A, deltas)
         intercept = intercept_init + torch.matmul(A, gammas)
@@ -337,7 +352,7 @@ class Chronos:
 
         #deltas = torch.where(torch.abs(deltas) < 0.01, torch.tensor(0.0), deltas)
         
-        gammas = -deltas * X_trend[self.changepoints.type(torch.int64)]
+        gammas = -deltas * self.changepoints
 
 
         slope = slope_init + torch.matmul(A, deltas)
@@ -442,7 +457,7 @@ class Chronos:
                                     num_samples=sample_number,
                                     return_sites=("obs", "trend")) 
 
-            A = self.make_A_matrix(X_trend.shape[0], self.changepoints)
+            A = self.make_A_matrix(X_trend, self.changepoints)
             samples = predictive(X_trend, X_seasonality, A)
             
             
@@ -590,17 +605,16 @@ class Chronos:
         growth = pyro.param(f'{self.param_prefix_}trend_slope').detach()
         #const, growth = pyro.param(self.param_name_).detach().numpy()[:2]
         trend_X = predictions[self.time_col_]
-        trend_Y = predictions['trend'] #growth * trend_X.values.astype(float)/(1e9*60*60*24) + const
+        trend_Y = predictions['trend']
         predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
         axs[current_axs].plot(trend_X, trend_Y, linewidth=3, c="green")
         for index, changepoint in enumerate(self.changepoints):
             
-            changepoint_as_index = int(changepoint.item())
-            changepoint_value = self.changepoints[index]
-            changepoint_date_value = trend_X.iloc[changepoint_as_index]
+            changepoint_value = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
+            changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_value)
 
             if (abs(changepoint_value) >= changepoint_threshold):
-                axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")
+                axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
         axs[current_axs].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
         axs[current_axs].set_xlabel('Date', size=18)
         axs[current_axs].set_ylabel('Growth', size=18)
