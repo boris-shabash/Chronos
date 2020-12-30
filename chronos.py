@@ -75,7 +75,7 @@ class Chronos:
         self.ms_to_day_ratio_ = (1e9*60*60*24)
         
         
-        
+    ######################################################################################################################## 
     def transform_data_(self, data):
         '''
             A function which takes the raw data containing the timestamp and
@@ -262,7 +262,15 @@ class Chronos:
     ########################################################################################################################
     def fit(self, data):
         '''
-            Fits the model to the data using the method specified.
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
         '''
         
         # Make a copy of the history
@@ -279,24 +287,6 @@ class Chronos:
         
         self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_, self.changepoint_range_)
         A = self.make_A_matrix(X_trend, self.changepoints)
-
-        #print(self.changepoints)
-        #print(A)
-        
-        
-        #for t, row in enumerate(A):
-        #    print(t, row)
-        #assert(False)
-            
-        
-        # Split the data into X features (all time related features), and 
-        # the target y
-        
-        #y = torch.tensor(internal_data[self.target_col_].values, dtype=torch.float32)
-        
-        #internal_data = internal_data.drop(self.target_col_, axis=1)
-        #X = torch.tensor(internal_data.values, dtype=torch.float32)
-        #self.X_names = internal_data.columns.values
         
         
         
@@ -417,10 +407,32 @@ class Chronos:
             
     ##################################################################
     def combine_components(self, X_trend, X_seasonality, A, deltas, gammas):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         pass
     ##################################################################
     
-    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):     
+    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):  
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''   
         
         intercept_init = pyro.param("intercept", torch.tensor(0.0))
         slope_init = pyro.param("trend_slope", torch.tensor(0.0))
@@ -479,11 +491,33 @@ class Chronos:
         
     
     def guide_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         pass
     
     
     ##################################################################
     def get_trend(self, X_trend):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         intercept = pyro.sample("intercept", dist.Normal(0.0, 10.0))
         trend_slope = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
 
@@ -493,6 +527,17 @@ class Chronos:
     ##################################################################
     
     def model_MAP_(self, X_trend, X_seasonality, A, changepoints, y=None):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         
         
         intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0))
@@ -564,6 +609,17 @@ class Chronos:
     
     
     def model_MAP_gamma(self, X, y=None):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         
         betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X.size(1)), 
                                                   torch.full((X.size(1),), 10.0)).to_event(1))
@@ -588,6 +644,17 @@ class Chronos:
     
     ##################################################################
     def predict(self, data, sample_number=100, ci_interval=0.95):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         #internal_data = self.transform_data_(data)
         #display(internal_data)
 
@@ -663,6 +730,17 @@ class Chronos:
     ##################################################################
     def make_future_dataframe(self, period=30, frequency="D", include_history=True):
         '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
+        '''
             Creates a future dataframe based on the specified parameters.
             
             Parameters:
@@ -686,6 +764,17 @@ class Chronos:
     
     ##################################################################
     def compute_seasonality(self, param_pairs, numeric_values, cycle_period):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         seasonality = np.zeros_like(numeric_values, dtype=np.float64)
 
 
@@ -700,6 +789,17 @@ class Chronos:
         return seasonality
     ##################################################################
     def get_weekly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         if (self.method_ == "MAP"):
             return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
@@ -708,6 +808,17 @@ class Chronos:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ##################################################################
     def get_seasonal_params(self, param_name, seasonality_name):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         seasonal_params = []
         for i, param in enumerate(pyro.param(param_name)):
             if (seasonality_name in self.seasonality_cols_[i]):
@@ -718,6 +829,17 @@ class Chronos:
         return seasonal_params
     ##################################################################
     def get_seasonal_plotly_figure(self, seasonality_df):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
 
         data_trace = go.Scatter(x=seasonality_df['X'], 
                                 y=seasonality_df['Y'], 
@@ -739,6 +861,17 @@ class Chronos:
     ##################################################################
     def get_weekly_seasonality_point(self, param_name):
         '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
+        '''
             0 = Monday
         '''
 
@@ -757,6 +890,17 @@ class Chronos:
     
     ##################################################################
     def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0, figure_name = None):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         
         plot_num = 3
         if self.weekly_seasonality_order_ > 0:
@@ -853,6 +997,17 @@ class Chronos:
         plt.show()
     ##################################################################
     def plot_weekly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         weekly_seasonality = self.get_weekly_seasonality()
         plt.figure(figsize=(15,5))
         plt.plot(weekly_seasonality['Weekday'], weekly_seasonality['Value'])
@@ -862,6 +1017,17 @@ class Chronos:
                 
     ##################################################################
     def plot_weekly_seasonality_plotly(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         weekly_seasonality = self.get_weekly_seasonality()
 
         fig = self.get_seasonal_plotly_figure(weekly_seasonality)
@@ -874,6 +1040,17 @@ class Chronos:
 
     ##################################################################
     def get_monthly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         if (self.method_ == "MAP"):
             return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
@@ -882,6 +1059,17 @@ class Chronos:
             raise NotImplementedError("Did not implement monthly seasonality for non MAP non MLE")
     ##################################################################
     def get_monthly_seasonality_point(self, param_name):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
 
         monthly_params = self.get_seasonal_params(param_name, "monthly")
         
@@ -896,6 +1084,17 @@ class Chronos:
         return monthly_seasonality
     ##################################################################
     def plot_monthly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         monthly_seasonality = self.get_monthly_seasonality()
         plt.figure(figsize=(15,5))
         plt.plot(monthly_seasonality['Monthday'], monthly_seasonality['Value'])
@@ -904,6 +1103,17 @@ class Chronos:
         plt.show();
     ##################################################################
     def plot_monthly_seasonality_plotly(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         monthly_seasonality = self.get_monthly_seasonality()
         
         fig = self.get_seasonal_plotly_figure(monthly_seasonality)
@@ -916,6 +1126,17 @@ class Chronos:
         fig.show()
     ##################################################################
     def get_yearly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         if (self.method_ == "MAP"):
             return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
@@ -924,6 +1145,17 @@ class Chronos:
             raise NotImplementedError("Did not implement yearly seasonality for non MAP non MLE")
     ##################################################################
     def get_yearly_seasonality_point(self, param_name):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
 
         yearly_params = self.get_seasonal_params(param_name, "yearly")
         
@@ -940,6 +1172,17 @@ class Chronos:
     
     ##################################################################
     def plot_yearly_seasonality(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         yearly_seasonality = self.get_yearly_seasonality()
         plt.figure(figsize=(15,5))
         plt.plot(yearly_seasonality['X'], yearly_seasonality['Y'])
@@ -949,6 +1192,17 @@ class Chronos:
         
     ##################################################################
     def plot_yearly_seasonality_plotly(self):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
         yearly_seasonality = self.get_yearly_seasonality()
 
         
