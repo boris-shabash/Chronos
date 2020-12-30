@@ -294,12 +294,16 @@ class Chronos:
         deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
 
         if (A.shape[1] > self.n_changepoints_):
+            #print(deltas.shape)
             extra_changepoint_num = A.shape[1] - self.n_changepoints_
             future_laplace_scale = torch.abs(deltas).mean()
 
-            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((3,))
+            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((extra_changepoint_num,))
 
             deltas = torch.cat([deltas, future_deltas])
+            #print(deltas.shape)
+            #print(changepoints.shape)
+            #assert(False)
         
     
         gammas = -deltas * changepoints
@@ -370,7 +374,7 @@ class Chronos:
             future_laplace_scale = torch.abs(deltas).mean()
             #print(future_laplace_scale)
 
-            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((3,))
+            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((extra_changepoint_num,))
             #future_deltas_mask = torch.distributions.Bernoulli(self.changepoint_proportion).sample((3,))
             #print(future_deltas)
             #print(future_deltas_mask)
