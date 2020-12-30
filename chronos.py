@@ -78,22 +78,49 @@ class Chronos:
         
     def transform_data_(self, data):
         '''
-            A function to grab the raw data with a timestamp and a target column and
-            add seasonality to the data using sine and cosine combinations. 
+            A function which takes the raw data containing the timestamp and
+            target column, and returns tensors for the trend and the
+            seasonality components
+
+            Parameters:
+            ------------
+            data -  The dataframe with the raw data. Must contain at least one column 
+                    with the timestamp (with dtype np.datetime64). It can optionally
+                    also contain the target column
+
+            
+            Returns:
+            ------------
+            X_trend -       A tensor of shape (n_samples, ), where n_samples
+                            is the number of samples in data
+
+            X_seasonality - A tensor of shape (n_samples, M) where n_samples
+                            is the number of samples in data, and M is the 
+                            sum of all seasonal orders
+
+            y -             A tensor of shape (n_samples, ), where n_samples
+                            is the number of samples in data, or None if
+                            there is no target column in the original data
         '''
+
         # make a copy to avoid side effects of changing the original df
         # and convert datetime column into time in days. This helps convergence
         # BY A LOT
         internal_data = data.copy()
+
+        # Add weekday, monthday, and yearday seasonal components
         internal_data['weekday'] = internal_data[self.time_col_].dt.dayofweek
         internal_data['monthday'] = internal_data[self.time_col_].dt.day - 1      # make days start at 0
         internal_data['yearday'] = internal_data[self.time_col_].dt.dayofyear - 1 # make days start at 0
-        #display(internal_data)
         
+        # Convert ms values to days
         internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/self.ms_to_day_ratio_
         
         
+        # Keep track of the seasonal columns' names
         self.seasonality_cols_ = []
+
+
         # Yearly seasonality 
         for i in range(1, self.year_seasonality_order_+1):
             cycle_position = i*2*math.pi*internal_data['yearday']/366 # max value will be 365
@@ -120,34 +147,70 @@ class Chronos:
             self.seasonality_cols_.extend([f"weekly_sin_{i}", f"weekly_cos_{i}"])
                                                                       
         
-        # Add a constant so we can train a simple vector of coefficients
-        #internal_data.insert(0, "CONST", 1.0)
-        #display(internal_data)
+        
+        # Drop the old columns, we don't need them anymore, we have the seasonal components now
         internal_data = internal_data.drop(['weekday', 'monthday', 'yearday'], axis=1)
 
+        # Finally, grab the data and make it into tensors
         X_trend = torch.tensor(internal_data[self.time_col_].values, dtype=torch.float32)
         X_seasonality = torch.tensor(internal_data[self.seasonality_cols_].values , dtype=torch.float32)
 
+        # If we don't have a target column (i.e. we're predicting), don't try and grab it
         if (self.target_col_ in internal_data.columns):
             y = torch.tensor(internal_data[self.target_col_].values, dtype=torch.float32)
         else:
             y = None
         
-        
-        #assert(False)
         return X_trend, X_seasonality, y
         
+    ########################################################################################################################
+    def find_changepoint_positions(self, X_trend, changepoint_num, changepoint_range, min_value = None, drop_first = True):
+        '''
+            A function which takes a tensor of the time, expressed in days, and the
+            number oc changepoints to find, and finds the desired number of changepoints.
+
+
+            Parameters:
+            ------------
+            X_trend -           A tensor of the time, expressed in days. The days
+                                need not be consecutive, or evenly spaced.
+
+            changepoint_num -   The number of changepoints to find
+
+            changepoint_range - The range of the available times to consider. A value between 0.0
+                                and 1.0. 0.8 means only the first 80% of the range is considered
+
+            min_value -         The timepoint which describes the beginning of the range
+                                where changepoints can be found. Default is None, which means
+                                the first measurement sets the beginning of the range
+
+            drop_first -        Whether to drop the first measurement found. When True, this 
+                                prevents from the first measurement of being considered as 
+                                a changepoint (we don't want the first day to be a changepoint usually)
+
+            Returns:
+            ------------
+            changepoints -      A tensor of shape (changepoint_num, ) where each entry is a day
+                                where a changepoint can happen. The changepoints are chosen
+                                to be evenly spaced based on the DATE RANGE, not the number
+                                of samples, in case samples are unevenly spaced.
+        '''
         
-    def find_changepoint_positions(self, X_trend, changepoint_num, min_value = None, drop_first = True):
-        
-        #changepoint_range = int(self.changepoint_range_ * X_trend.max())
+        # Set the minimum value in case it is None
         if (min_value is None):
             min_value = X_trend.min().item()
-        max_value_in_data = X_trend.max().item() #* data_prop
+        
+        # Find the maximum value available in the data
+        max_value_in_data = X_trend.max().item() 
 
-        max_distance = (max_value_in_data - min_value) * self.changepoint_range_
+        # We usually don't want to consider the entire range, so we only
+        # consider a certain section, dictated by changepoint_range
+        max_distance = (max_value_in_data - min_value) * changepoint_range
         max_value = min_value + max_distance
 
+        # When fitting, we don't want the first day to be a changepoint candidate
+        # However, when predicting the future, it is very much possible our first
+        # prediction day is a changepoint
         if (drop_first):
             changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num+1, dtype=np.float32))
             changepoints = changepoints[1:] # The first entry will always be 0, but we don't
@@ -155,26 +218,48 @@ class Chronos:
         else:
             changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num, dtype=np.float32))
 
+
         changepoints = torch.tensor(changepoints, dtype=torch.float32)
 
         return changepoints
         
-
+    ########################################################################################################################
     def make_A_matrix(self, X_trend, changepoints):
+        '''
+            A function which takes in the time tensor, and the changepoints
+            chosen, and produces a matrix A which specifies when to add the
+            effect of the changepoints
+
+            Parameters:
+            ------------
+            X_trend -       A tensor of the time, in days
+
+            changepoints -  A tensor of changepoints where each element
+                            is a day when a changepoint can happen
+
+            Returns:
+            ------------
+            A -             A tensor of shape (n_samples, S), where n_samples
+                            is the number of samples in X_trend, and S
+                            is the number of changepoints
+        '''
+
+        
         A = torch.zeros((X_trend.shape[0], len(changepoints)))
 
-        #print(X_trend)
-
+        # For each row t and column j,
+        # A(t, j) = 1 if X_trend[t] >= changepoints[j]. i.e. if the current time 
+        # denoted by that row is greater or equal to the time of the most recent
+        # changepoint
         for t, row in enumerate(A):
             for j, col in enumerate(row):
                 if (changepoints[j] <= X_trend[t]):
                     A[t, j] = 1.0
 
-        #print(A)
-        #assert(False)
+        
         return A
 
-
+    ########################################################################################################################
     def fit(self, data):
         '''
             Fits the model to the data using the method specified.
@@ -192,7 +277,7 @@ class Chronos:
         
         
         
-        self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_)
+        self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_, self.changepoint_range_)
         A = self.make_A_matrix(X_trend, self.changepoints)
 
         #print(self.changepoints)
@@ -239,45 +324,94 @@ class Chronos:
                                           y)
         elif (self.method == "MCMC"):
             print("Employing Markov Chain Monte Carlo")
+            raise NotImplementedError("Did not implement MCMC methods")
         
             
             
-    ##################################################################
+    ########################################################################################################################
     def train_MCMC(self, model, X, y, sample_num = 3000):
+        '''
+            A function which does nothing yet
+        '''
         pass
     
-    ##################################################################
+    ########################################################################################################################
     def train_point_estimate(self, model, guide, X_trend, X_seasonality, A, y):
+        '''
+        A function which takes in the model and guide to use for
+        the training of point estimates of the parameters, as well as
+        the regressor tensors, the changepoint matrix, and the target,
+        and performs optimization on the model parameters
+
+        Parameters:
+        ------------
+        model -         A callable which defined the generative model which
+                        generates the data. Usually a function
+
+        guide -         A callable which defines all parameters relevant
+                        to the model and how to employ them to sample
+                        from the distributions in the model. Usually a function
+
+        X_trend -       The time tensor specifying the time regressor
+
+        X_seasonality - The seasonality tensor specifying all cyclical regressors
+
+        A -             The changepoint matrix defining, for each time stamp,
+                        which changepoints occured
+
+        y -             The target to predict, i.e. the time series measurements
+
+        Returns:
+        ------------
+        None
+        '''
         
+        # Make sure we are working with a fresh param store 
+        # TODO: see if there is a way to protect this
         pyro.clear_param_store()
         
-        # Adam, SGD
+        # Use a decaying optimizer which starts with a given learning
+        # rate, but then slowly drops it to take smaller and smaller
+        # steps
         optimizer = Rprop
         scheduler = pyro.optim.ExponentialLR({'optimizer': optimizer, 
                                               'optim_args': {'lr': self.lr_}, 
                                               'gamma': 0.9})
         
-        my_loss = JitTrace_ELBO()
+        # Use the ELBO (evidence lower bound) loss function
+        # and Stochastic Variational Inference optimzation
+        # technique
         my_loss = Trace_ELBO()
         self.svi_ = SVI(model, 
                         guide, 
                         scheduler, 
                         loss=my_loss)
         
-        
+        # Calculate when to print output
         print_interval = max(self.n_iter_//10000, 10)
         
+        # Iterate through the optimization
         for step in range(self.n_iter_):
             
-            loss = round(self.svi_.step(X_trend, X_seasonality, A, self.changepoints, y)/y.shape[0], 4)
+            loss = self.svi_.step(X_trend, 
+                                  X_seasonality, 
+                                  A, 
+                                  self.changepoints, 
+                                  y)
+
+            # After calculating the loss, normalize by the 
+            # number of points
+            loss = round(loss/y.shape[0], 4)
             
+            # If required, print out the results
             if (step % print_interval == 0):
                 pct_done = round(100*(step+1)/self.n_iter_, 2)
                 
                 print(" "*100, end="\r")
                 print(f"{pct_done}% - ELBO loss: {loss}", end="\r")
         
-        pct_done = round(100*(step+1)/self.n_iter_, 2)
+        # Always have a final printout
+        pct_done = 100.0
         print(" "*100, end="\r")
         print(f"{pct_done}% - ELBO loss: {loss}")
             
@@ -464,6 +598,7 @@ class Chronos:
 
         future_changepoint_positions = self.find_changepoint_positions(X_trend, 
                                                                        future_changepoint_number, 
+                                                                       1.0,
                                                                        min_value = self.max_train_time, 
                                                                        drop_first = False)
 
