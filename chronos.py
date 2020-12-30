@@ -135,14 +135,18 @@ class Chronos:
         return X_trend, X_seasonality, y
         
         
-    def find_changepoint_positions(self, X_trend):
+    def find_changepoint_positions(self, X_trend, start_time = 0, drop_first = False):
         
         changepoint_range = int(self.changepoint_range_ * X_trend.shape[0])
 
-        changepoints =  np.round(np.linspace(0, changepoint_range, self.n_changepoints_+1, dtype=np.float32))
-        changepoints = changepoints[1:] # The first entry will always be 0, but we don't
-                                        # want a changepoint right in the beginning
+        if (drop_first):
+            changepoints =  np.round(np.linspace(0, changepoint_range, self.n_changepoints_+1, dtype=np.float32))
+            changepoints = changepoints[1:] # The first entry will always be 0, but we don't
+                                            # want a changepoint right in the beginning
+        else:
+            changepoints =  np.round(np.linspace(0, changepoint_range, self.n_changepoints_, dtype=np.float32))
 
+        print(changepoints)
         return torch.tensor(changepoints, dtype=torch.float32)
         
 
@@ -168,6 +172,9 @@ class Chronos:
         # Transform the data by adding seasonality
         #internal_data = self.transform_data_(data)
         X_trend, X_seasonality, y = self.transform_data_(data)
+        self.changepoint_proportion = self.n_changepoints_/(X_trend.max() - X_trend.min())
+        self.max_train_time = X_trend.max().item()
+        
         
         
         self.changepoints = self.find_changepoint_positions(X_trend)
@@ -198,13 +205,13 @@ class Chronos:
                 print("Employing Maximum Likelihood Estimation")
                 self.model = self.model_MLE_
                 self.guide = self.guide_MLE_
-                self.param_name_ = "betas"
+                self.param_prefix_ = ""
                 
             elif (self.method_ == "MAP"):
                 print("Employing Maximum A Posteriori")
                 self.model = self.model_MAP_
                 self.guide = AutoDelta(self.model, init_loc_fn=init_to_feasible)
-                self.param_name_ = "AutoDelta.betas"
+                self.param_prefix_  = "AutoDelta."
                 
             # This raises a trace warning so we turn that off. 
             with warnings.catch_warnings():
@@ -261,37 +268,51 @@ class Chronos:
             
     ##################################################################
     
-    def model_MLE_(self, X_trend, X_seasonality, y=None):     
+    def model_MLE_(self, X_trend, X_seasonality, A, y=None):     
+        
+        intercept_init = pyro.param("intercept", torch.tensor(0.0))
+        slope_init = pyro.param("trend_slope", torch.tensor(0.0))
 
-        intercept = pyro.param("intercept", torch.tensor(0.0))
-        trend_slope = pyro.param("trend_slope", torch.tensor(0.0))
+        deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
+        gammas = -deltas * X_trend[self.changepoints.type(torch.int64)]
 
-        trend = trend_slope * X_trend + intercept
+        slope = slope_init + torch.matmul(A, deltas)
+        intercept = intercept_init + torch.matmul(A, gammas)
+
+
+
+        trend = slope * X_trend + intercept
+
+        pyro.deterministic('trend', trend)
 
         betas = pyro.param(f"betas", torch.zeros(X_seasonality.size(1)))
 
-                                        
-        
         seasonality = X_seasonality.matmul(betas)
         
 
-        mu = trend + seasonality
+        linear_combo = trend + seasonality
+        mu = linear_combo
 
             
         
         sigma = pyro.param("sigma", 
                            torch.tensor(1.0), 
                            constraint = constraints.positive)
+
+        df = pyro.param("df", 
+                        torch.tensor(1.0), 
+                        constraint = constraints.positive)
          
         
         with pyro.plate("data", X_trend.size(0)):
-            pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+            #pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
             
         return mu
         
         
     
-    def guide_MLE_(self, X_trend, X_seasonality, y=None):
+    def guide_MLE_(self, X_trend, X_seasonality, A, y=None):
         pass
     
     
@@ -308,11 +329,8 @@ class Chronos:
     def model_MAP_(self, X_trend, X_seasonality, A, y=None):
         
         
-        #print("X_trend", X_trend.shape)
-        #print("A", A.shape)
-        #trend = self.get_trend(X_trend)
-        intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0)) # m
-        slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0)) # k
+        intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0))
+        slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
 
         deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
                                                    torch.full((self.n_changepoints_, ), 0.05)).to_event(1))
@@ -355,7 +373,12 @@ class Chronos:
 
         linear_combo = trend + seasonality
         mu = linear_combo
-        
+        #mu = torch.nn.Softplus()(linear_combo)+torch.finfo(torch.float32).eps
+        #if (mu < 0.0):
+        #    mu = -mu
+        #rate = pyro.sample("rate", dist.HalfCauchy(1.0))#.clamp(min=torch.finfo(torch.float32).eps)
+        #shape = (mu * rate)#.clamp(min=torch.finfo(torch.float32).eps)
+        #print(shape, rate)
         
         sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
         df = pyro.sample("df", dist.HalfCauchy(1.0))
@@ -398,6 +421,12 @@ class Chronos:
         #display(internal_data)
 
         X_trend, X_seasonality, y = self.transform_data_(data)
+        future_changepoint_number = self.changepoint_proportion * (X_trend.max() - self.max_train_time)
+        future_changepoint_number = round(future_changepoint_number.item())
+        print(future_changepoint_number)
+
+
+        #assert(False)
         
         
         #y = torch.tensor(internal_data[self.target_col_].values, dtype=torch.float32)
@@ -478,9 +507,9 @@ class Chronos:
     ##################################################################
     def get_weekly_seasonality(self):
         if (self.method_ == "MAP"):
-            return self.get_weekly_seasonality_point('AutoDelta.betas')
+            return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
-            return self.get_weekly_seasonality_point('betas')
+            return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ##################################################################
@@ -557,8 +586,8 @@ class Chronos:
         current_axs += 1
 
 
-        const = pyro.param('AutoDelta.intercept').detach()
-        growth = pyro.param('AutoDelta.trend_slope').detach()
+        const = pyro.param(f'{self.param_prefix_}intercept').detach()
+        growth = pyro.param(f'{self.param_prefix_}trend_slope').detach()
         #const, growth = pyro.param(self.param_name_).detach().numpy()[:2]
         trend_X = predictions[self.time_col_]
         trend_Y = predictions['trend'] #growth * trend_X.values.astype(float)/(1e9*60*60*24) + const
@@ -570,7 +599,7 @@ class Chronos:
             changepoint_value = self.changepoints[index]
             changepoint_date_value = trend_X.iloc[changepoint_as_index]
 
-            if (abs(changepoint_value) > changepoint_threshold):
+            if (abs(changepoint_value) >= changepoint_threshold):
                 axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")
         axs[current_axs].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
         axs[current_axs].set_xlabel('Date', size=18)
@@ -646,9 +675,9 @@ class Chronos:
     ##################################################################
     def get_monthly_seasonality(self):
         if (self.method_ == "MAP"):
-            return self.get_monthly_seasonality_point('AutoDelta.betas')
+            return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
-            return self.get_monthly_seasonality_point('betas')
+            return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement monthly seasonality for non MAP non MLE")
     ##################################################################
@@ -688,9 +717,9 @@ class Chronos:
     ##################################################################
     def get_yearly_seasonality(self):
         if (self.method_ == "MAP"):
-            return self.get_yearly_seasonality_point('AutoDelta.betas')
+            return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
         elif (self.method_ == "MLE"):
-            return self.get_yearly_seasonality_point('betas')
+            return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement yearly seasonality for non MAP non MLE")
     ##################################################################
