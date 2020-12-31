@@ -405,7 +405,7 @@ class Chronos:
         print(" "*100, end="\r")
         print(f"{pct_done}% - ELBO loss: {loss}")
             
-    ##################################################################
+    ########################################################################################################################
     def combine_components(self, X_trend, X_seasonality, A, deltas, gammas):
         '''
 
@@ -419,60 +419,107 @@ class Chronos:
             
         '''
         pass
-    ##################################################################
-    
-    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):  
-        '''
+    ########################################################################################################################
+    def add_future_changepoints(self, A, deltas):
 
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''   
-        
-        intercept_init = pyro.param("intercept", torch.tensor(0.0))
-        slope_init = pyro.param("trend_slope", torch.tensor(0.0))
-
-        deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
-
-        if (A.shape[1] > self.n_changepoints_):
-            #print(deltas.shape)
-            extra_changepoint_num = A.shape[1] - self.n_changepoints_
+        if (A.shape[1] > deltas.shape[0]):
+            # Infer future changepoint number
+            extra_changepoint_num = A.shape[1] - deltas.shape[0]
             future_laplace_scale = torch.abs(deltas).mean()
 
-            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((extra_changepoint_num,))
+            changepoint_dist = torch.distributions.Laplace(0, future_laplace_scale)
+            
+            # The future changepoints can be any value from the
+            # inferred Laplace distribution
+            future_deltas = changepoint_dist.sample((extra_changepoint_num,))
 
+            # Combine the past change rates as 
+            # well as future ones
             deltas = torch.cat([deltas, future_deltas])
-            #print(deltas.shape)
-            #print(changepoints.shape)
-            #assert(False)
-        
-    
+
+        return deltas
+
+    ########################################################################################################################
+    def compute_trend(self, X_trend, slope_init, intercept_init, A, deltas, changepoints):
+
+        # To adjust the rates we also need to adjust the displacement during each rate change
         gammas = -deltas * changepoints
 
+        # There is a unique slope value and intercept value for each
+        # timepoint to create a piece-wise function
         slope = slope_init + torch.matmul(A, deltas)
         intercept = intercept_init + torch.matmul(A, gammas)
 
 
-
+        # Finall compute the trend component and record it in the global
+        # parameter store using the pyro.deterministic command
         trend = slope * X_trend + intercept
-
         pyro.deterministic('trend', trend)
 
-        betas = pyro.param(f"betas", torch.zeros(X_seasonality.size(1)))
+        return trend
 
+    ########################################################################################################################
+    
+    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):  
+        '''
+            A function which defined a linear model over the trend and seasonality 
+            components along with a set of potential changepoints. 
+            The model is defined simply by a set of tunable parameters with no
+            consideration for priors
+
+
+            Parameters:
+            ------------
+            
+            X_trend -       The time tensor specifying the time regressor
+
+            X_seasonality - The seasonality tensor specifying all cyclical regressors
+
+            A -             The changepoint matrix defining, for each time stamp,
+                            which changepoints occured
+
+            changepoints -  A tensor of timestamps, in days, of when each changepoint occurs
+
+            y -             The target to predict, i.e. the time series measurements.
+                            If None, the model generates these observations instead.
+
+            
+            Returns:
+            ------------
+            mu -            A tensor of the expected values to observe given the regressor
+                            tensors and changepoints
+            
+        '''   
+        
+        # Define paramters for the constant and slope
+        intercept_init = pyro.param("intercept", torch.tensor(0.0))
+        slope_init = pyro.param("trend_slope", torch.tensor(0.0))
+
+        # define slope change values for each changepoint
+        deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
+
+        # If the matrix specifies more changepoints than have been 
+        # observed we have to generate the additional changepoints
+        # for the prediction
+        deltas = self.add_future_changepoints(A, deltas)
+            
+        # Compute the trend
+        trend = self.compute_trend(X_trend, slope_init, intercept_init, A, deltas, changepoints)
+
+        # The seasonality is defined as a vector of coefficients
+        # over the seasonality component
+        betas = pyro.param(f"betas", torch.zeros(X_seasonality.size(1)))
         seasonality = X_seasonality.matmul(betas)
         
-
+        # Finally create a linear combination for the data
         linear_combo = trend + seasonality
         mu = linear_combo
 
             
-        
+        # Define additional paramters specifying the likelihood
+        # distribution. In the default cause, it is the
+        # standard deviation and the degrees of freedom for the
+        # t-distribution
         sigma = pyro.param("sigma", 
                            torch.tensor(1.0), 
                            constraint = constraints.positive)
@@ -482,186 +529,171 @@ class Chronos:
                         constraint = constraints.positive)
          
         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
         with pyro.plate("data", X_trend.size(0)):
-            #pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
             
         return mu
         
         
-    
+    ########################################################################################################################
     def guide_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):
         '''
+            A function which specifies a special guide which does nothing.
+            This guide is used in MLE optimization since there is no
+            relationship between parameters and prior distributions.
+            The estimations are themselves tunable paramters (see model_MLE_)
 
             Parameters:
             ------------
             
+            X_trend -       The time tensor specifying the time regressor
+
+            X_seasonality - The seasonality tensor specifying all cyclical regressors
+
+            A -             The changepoint matrix defining, for each time stamp,
+                            which changepoints occured
+
+            changepoints -  A tensor of timestamps, in days, of when each changepoint occurs
+
+            y -             The target to predict, i.e. the time series measurements.
+                            If None, the model generates these observations instead.
 
             
             Returns:
             ------------
+            None
             
         '''
         pass
     
     
-    ##################################################################
-    def get_trend(self, X_trend):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        intercept = pyro.sample("intercept", dist.Normal(0.0, 10.0))
-        trend_slope = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
-
-        trend = trend_slope * X_trend + intercept
-
-        return trend
-    ##################################################################
-    
+    ########################################################################################################################
+    ########################################################################################################################    
     def model_MAP_(self, X_trend, X_seasonality, A, changepoints, y=None):
         '''
+            A function which defined a linear model over the trend and seasonality 
+            components along with a set of potential changepoints. 
+            The model is defined by a set of prior distributions over the values.
+
 
             Parameters:
             ------------
             
+            X_trend -       The time tensor specifying the time regressor
+
+            X_seasonality - The seasonality tensor specifying all cyclical regressors
+
+            A -             The changepoint matrix defining, for each time stamp,
+                            which changepoints occured
+
+            changepoints -  A tensor of timestamps, in days, of when each changepoint occurs
+
+            y -             The target to predict, i.e. the time series measurements.
+                            If None, the model generates these observations instead.
 
             
             Returns:
             ------------
+            mu -            A tensor of the expected values to observe given the regressor
+                            tensors and changepoints
             
         '''
         
-        
+        # Define paramters for the constant and slope
         intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0))
         slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
 
+        # define slope change values for each changepoint
         deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
                                                    torch.full((self.n_changepoints_, ), 0.05)).to_event(1))
 
+        # If the matrix specifies more changepoints than have been 
+        # observed we have to generate the additional changepoints
+        # for the prediction
+        deltas = self.add_future_changepoints(A, deltas)
         
-        if (A.shape[1] > self.n_changepoints_):
-            extra_changepoint_num = A.shape[1] - self.n_changepoints_
-            #print(deltas)
-            future_laplace_scale = torch.abs(deltas).mean()
-            #print(future_laplace_scale)
+        # Compute the trend
+        trend = self.compute_trend(X_trend, slope_init, intercept_init, A, deltas, changepoints)
 
-            future_deltas = torch.distributions.Laplace(0, future_laplace_scale).sample((extra_changepoint_num,))
-            #future_deltas_mask = torch.distributions.Bernoulli(self.changepoint_proportion).sample((3,))
-            #print(future_deltas)
-            #print(future_deltas_mask)
-
-            deltas = torch.cat([deltas, future_deltas])
-            #print(deltas)
-            #print(changepoints)
-
-            #assert(False)
-
-        #deltas = torch.where(torch.abs(deltas) < 0.01, torch.tensor(0.0), deltas)
-        
-    
-        gammas = -deltas * changepoints
-
-
-        slope = slope_init + torch.matmul(A, deltas)
-        intercept = intercept_init + torch.matmul(A, gammas)
-        
-
-
-
-        trend = (slope * X_trend) + intercept
-
-        pyro.deterministic("trend", trend)
-
+        # The seasonality is defined as a vector of coefficients
+        # over the seasonality component
         betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X_seasonality.size(1)), 
                                                   torch.full((X_seasonality.size(1),), 10.0)).to_event(1))
-
-                                        
         seasonality = X_seasonality.matmul(betas)
         
-
+        # Finally create a linear combination for the data
         linear_combo = trend + seasonality
         mu = linear_combo
-        #mu = torch.nn.Softplus()(linear_combo)+torch.finfo(torch.float32).eps
-        #if (mu < 0.0):
-        #    mu = -mu
-        #rate = pyro.sample("rate", dist.HalfCauchy(1.0))#.clamp(min=torch.finfo(torch.float32).eps)
-        #shape = (mu * rate)#.clamp(min=torch.finfo(torch.float32).eps)
-        #print(shape, rate)
         
+        # Define additional paramters specifying the likelihood
+        # distribution. In the default cause, it is the
+        # standard deviation and the degrees of freedom for the
+        # t-distribution
         sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
         df = pyro.sample("df", dist.HalfCauchy(1.0))
          
-        
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
         with pyro.plate("data", X_trend.size(0)):
-            #pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
-            #pyro.sample('obs', dist.Gamma(shape, rate), obs=y)
             
         return mu
     
     
-    def model_MAP_gamma(self, X, y=None):
+    ########################################################################################################################
+    def predict(self, data, sample_number=1000, ci_interval=0.95):
         '''
+            A function which accepts a dataframe with at least one column, the timestamp
+            and employes the learned parameters to predict observations as well as 
+            credibility intervals and uncertainty intervals.
+            Returns a dataframe with predictions for observations, upper and lower limits
+            for credibility intervals, trend, and upper and lower limits on trend 
+            uncertainty.
 
             Parameters:
             ------------
+            data -          The dataframe. Must at least have a single column of timestamp
+                            with the same name as the training dataframe
+
+            sample_number - The number of posterior samples to generate in order to
+                            draw the uncertainty intervals and credibility intervals.
+                            Larger values give more accurate results, but also take
+                            longer to run. Default 1000
+
+            ci_interval -   The credibility interval range to generate. 0.95 generates
+                            a range such that 95% of all observations fall within this 
+                            range. Default 0.95.
             
 
             
             Returns:
             ------------
+            predictions -   A dataframe with:
+                            [time_col] -    The time column fed into this method
+                            [target_col] -  The name for the original target column if history is included in the dataframe
+                            yhat -          The predicted value for observations
+                            yhat_upper -    The upper value for uncertainty + credibility interval
+                            yhat_lower -    The lower value for uncertainty + credibility interval
+                            trend -         The predicted value for the trend, excluding seasonality
+                            trend_upper -   The upper value for trend uncertainty
+                            trend_lower -   The lower value for trend uncertainty
+
+                            Seasonality is not returned in the dataframe, but is incorporated when
+                            computing yhat.
             
         '''
-        
-        betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X.size(1)), 
-                                                  torch.full((X.size(1),), 10.0)).to_event(1))
-        
-        linear_combo = X.matmul(betas)
-        
-        mu = linear_combo.clamp(min=torch.finfo(torch.float32).eps)
-            
-        
-        
-        rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
-        shape = mu * rate
-         
-        #print(shape, rate)
-        
-        
-        with pyro.plate("data", X.size(0)):
-            pyro.sample('obs', dist.Gamma(shape, rate), obs=y)
-            
-        return mu
-        
-    
-    ##################################################################
-    def predict(self, data, sample_number=100, ci_interval=0.95):
-        '''
 
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        #internal_data = self.transform_data_(data)
-        #display(internal_data)
-
+        # Transform data into trend and seasonality as before
         X_trend, X_seasonality, y = self.transform_data_(data)
+
+        # Create future changepoint markers based on the proportion of changepoints
+        # encoutered in the history
         future_changepoint_number = self.changepoint_proportion * (X_trend.max() - self.max_train_time)
         future_changepoint_number = round(future_changepoint_number.item())
-        #print(future_changepoint_number)
 
         future_changepoint_positions = self.find_changepoint_positions(X_trend, 
                                                                        future_changepoint_number, 
@@ -669,21 +701,17 @@ class Chronos:
                                                                        min_value = self.max_train_time, 
                                                                        drop_first = False)
 
+        # Combine past and future changepoints
         combined_changepoints = []
         combined_changepoints.extend(self.changepoints)
         combined_changepoints.extend(future_changepoint_positions)
         combined_changepoints = torch.tensor(combined_changepoints)
-        #print(future_changepoint_positions)
+        
+        # Create changepoint matrix for all changepoints
+        A = self.make_A_matrix(X_trend, combined_changepoints)
 
-        #assert(False)
-        
-        
-        #y = torch.tensor(internal_data[self.target_col_].values, dtype=torch.float32)
-        
-        #internal_data = internal_data.drop(self.target_col_, axis=1)
-        #X = torch.tensor(internal_data.values, dtype=torch.float32)
 
-        
+        # For point estimates, use the predictive interface
         if (self.method_ in ["MAP", "MLE"]):
             # https://pyro.ai/examples/bayesian_regression.html#Model-Evaluation
             predictive = Predictive(model=self.model,
@@ -691,24 +719,25 @@ class Chronos:
                                     num_samples=sample_number,
                                     return_sites=("obs", "trend")) 
 
-            A = self.make_A_matrix(X_trend, combined_changepoints)
-            #print(A.shape)
-            #assert(False)
+            
             samples = predictive(X_trend, X_seasonality, A, combined_changepoints)
             
             
+            # Calculate ntiles based on the CI provided. Each side should have
+            # CI/2 credibility
             space_on_each_side = (1.0 - ci_interval)/2.0
             lower_ntile = int(len(samples['obs']) * space_on_each_side)
             upper_ntile = int(len(samples['obs']) * (1.0 - space_on_each_side))
             
-
+            # The resulting tensor returns with (sample_number, 1, n_samples) shape
             trend_array = samples['trend'].squeeze()
+
+            # Calculate uncertainty
             trend = trend_array.mean(dim=0)
             trend_upper = trend_array.max(dim=0).values
             trend_lower = trend_array.min(dim=0).values
 
-            #print(trend_array)
-            #print(trend_upper.values)
+            # Build the output dataframe
             predictions = pd.DataFrame({"yhat": torch.mean(samples['obs'], 0).detach().numpy(),
                                         "yhat_lower": samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
                                         "yhat_upper": samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy(),
@@ -716,18 +745,26 @@ class Chronos:
                                         "trend_lower": trend_lower.detach().numpy(),
                                         "trend_upper": trend_upper.detach().numpy()})
             
-            predictions[self.target_col_] = y.detach().numpy()
+            # Incorporate the original values, and build the column order to return
+            columns_to_return = []
+            if (y is not None):
+                predictions[self.target_col_] = y.detach().numpy()
+                columns_to_return.append(self.target_col_)
+
+            columns_to_return.append(self.time_col_)
             predictions[self.time_col_] = data[self.time_col_]
-            return predictions[[self.time_col_, self.target_col_, 
-                                'yhat', 'yhat_upper', 'yhat_lower', 
-                                'trend', 'trend_upper', 'trend_lower']]
+
+            columns_to_return.extend(['yhat', 'yhat_upper', 'yhat_lower', 
+                                      'trend', 'trend_upper', 'trend_lower'])
+                                      
+            return predictions[columns_to_return]
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.method_}")
 
         
         
         
-    ##################################################################
+    ########################################################################################################################
     def make_future_dataframe(self, period=30, frequency="D", include_history=True):
         '''
 
@@ -762,7 +799,7 @@ class Chronos:
         return future_df
     
     
-    ##################################################################
+    ########################################################################################################################
     def compute_seasonality(self, param_pairs, numeric_values, cycle_period):
         '''
 
@@ -787,7 +824,8 @@ class Chronos:
             seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
 
         return seasonality
-    ##################################################################
+
+    ########################################################################################################################
     def get_weekly_seasonality(self):
         '''
 
@@ -806,7 +844,7 @@ class Chronos:
             return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
-    ##################################################################
+    ########################################################################################################################
     def get_seasonal_params(self, param_name, seasonality_name):
         '''
 
@@ -827,7 +865,7 @@ class Chronos:
         seasonal_params = np.array(seasonal_params).reshape(-1, 2)
 
         return seasonal_params
-    ##################################################################
+    ########################################################################################################################
     def get_seasonal_plotly_figure(self, seasonality_df):
         '''
 
@@ -858,7 +896,7 @@ class Chronos:
         fig.update_yaxes(showgrid=False)
 
         return fig
-    ##################################################################
+    ########################################################################################################################
     def get_weekly_seasonality_point(self, param_name):
         '''
 
@@ -888,7 +926,7 @@ class Chronos:
         
         return weekly_seasonality
     
-    ##################################################################
+    ########################################################################################################################
     def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0, figure_name = None):
         '''
 
@@ -995,7 +1033,7 @@ class Chronos:
         if (figure_name is not None):
             plt.savefig(figure_name, dpi=96*4)
         plt.show()
-    ##################################################################
+    ########################################################################################################################
     def plot_weekly_seasonality(self):
         '''
 
@@ -1015,7 +1053,7 @@ class Chronos:
         plt.xlim(0.0, 6.0)
         plt.show();
                 
-    ##################################################################
+    ########################################################################################################################
     def plot_weekly_seasonality_plotly(self):
         '''
 
@@ -1038,7 +1076,7 @@ class Chronos:
                           title=dict(text="Weekly Seasonality", x = 0.5))
         fig.show()
 
-    ##################################################################
+    ########################################################################################################################
     def get_monthly_seasonality(self):
         '''
 
@@ -1057,7 +1095,7 @@ class Chronos:
             return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement monthly seasonality for non MAP non MLE")
-    ##################################################################
+    ########################################################################################################################
     def get_monthly_seasonality_point(self, param_name):
         '''
 
@@ -1082,7 +1120,7 @@ class Chronos:
                                             "Y": seasonality})
         
         return monthly_seasonality
-    ##################################################################
+    ########################################################################################################################
     def plot_monthly_seasonality(self):
         '''
 
@@ -1101,7 +1139,7 @@ class Chronos:
         plt.axhline(0.0, c="black")
         plt.xlim(1.0, 30.0)
         plt.show();
-    ##################################################################
+    ########################################################################################################################
     def plot_monthly_seasonality_plotly(self):
         '''
 
@@ -1124,7 +1162,7 @@ class Chronos:
                                      ticktext = monthly_seasonality['Label']),
                           title=dict(text="Monthly Seasonality", x = 0.5))    
         fig.show()
-    ##################################################################
+    ########################################################################################################################
     def get_yearly_seasonality(self):
         '''
 
@@ -1143,7 +1181,7 @@ class Chronos:
             return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement yearly seasonality for non MAP non MLE")
-    ##################################################################
+    ########################################################################################################################
     def get_yearly_seasonality_point(self, param_name):
         '''
 
@@ -1170,7 +1208,7 @@ class Chronos:
         
         return yearly_seasonality
     
-    ##################################################################
+    ########################################################################################################################
     def plot_yearly_seasonality(self):
         '''
 
@@ -1190,7 +1228,7 @@ class Chronos:
         plt.xlim(1.0, 366.0)
         plt.show()
         
-    ##################################################################
+    ########################################################################################################################
     def plot_yearly_seasonality_plotly(self):
         '''
 
