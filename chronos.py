@@ -47,7 +47,7 @@ class Chronos:
     
     
     def __init__(self, 
-                 method="MLE", 
+                 method="MAP", 
                  time_col = "ds",
                  target_col="y", 
                  n_changepoints = 20,
@@ -55,13 +55,16 @@ class Chronos:
                  month_seasonality_order=5,
                  weekly_seasonality_order=3,
                  learning_rate=0.01,
+                 changepoint_range = 0.8,
+                 changepoint_prior = 0.05,
                  max_iter=1000):
         
         self.method_ = method
         self.n_iter_ = max_iter
         self.lr_ = learning_rate
         self.n_changepoints_ = n_changepoints
-        self.changepoint_range_  = 0.8
+        self.changepoint_range_  = changepoint_range
+        self.changepoint_prior_ = changepoint_prior
         
         
         self.year_seasonality_order_ = year_seasonality_order
@@ -608,7 +611,7 @@ class Chronos:
 
         # define slope change values for each changepoint
         deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
-                                                   torch.full((self.n_changepoints_, ), 0.05)).to_event(1))
+                                                   torch.full((self.n_changepoints_, ), self.changepoint_prior_)).to_event(1))
 
         # If the matrix specifies more changepoints than have been 
         # observed we have to generate the additional changepoints
@@ -645,28 +648,46 @@ class Chronos:
     
     
     ########################################################################################################################
-    def predict(self, data, sample_number=1000, ci_interval=0.95):
+    def predict(self, future_df=None, sample_number=1000, ci_interval=0.95, period=30, frequency='D', include_history=True):
         '''
             A function which accepts a dataframe with at least one column, the timestamp
             and employes the learned parameters to predict observations as well as 
             credibility intervals and uncertainty intervals.
+            Alternatively, the function can accept the parameters accepted by .make_future_dataframe
+            and produce the future dataframe internally.
             Returns a dataframe with predictions for observations, upper and lower limits
             for credibility intervals, trend, and upper and lower limits on trend 
             uncertainty.
 
             Parameters:
             ------------
-            data -          The dataframe. Must at least have a single column of timestamp
-                            with the same name as the training dataframe
+            future_df -         The dataframe. Must at least have a single column of timestamp
+                                with the same name as the training dataframe. If data is not
+                                provided, period, frequency, and include_history must be
+                                provided. If data is provided, period, frequency, and include_history
+                                are ignored
 
-            sample_number - The number of posterior samples to generate in order to
-                            draw the uncertainty intervals and credibility intervals.
-                            Larger values give more accurate results, but also take
-                            longer to run. Default 1000
+            sample_number -     The number of posterior samples to generate in order to
+                                draw the uncertainty intervals and credibility intervals.
+                                Larger values give more accurate results, but also take
+                                longer to run. Default 1000
 
-            ci_interval -   The credibility interval range to generate. 0.95 generates
-                            a range such that 95% of all observations fall within this 
-                            range. Default 0.95.
+            ci_interval -       The credibility interval range to generate. 0.95 generates
+                                a range such that 95% of all observations fall within this 
+                                range. Default 0.95.
+
+            period -            The number of future observations based on
+                                frequency. The default is 30, and the default
+                                for frequency id 'D' which means 30 days ahead
+            
+            frequency -         The frequency of the period. See 
+                                https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
+                                for a list of supported freuqncies.
+                                The default is 'D' which stands for calendar 
+                                day
+
+            incldue_history -   A boolean describing whether to include history
+                                observations or not used by the fit method
             
 
             
@@ -686,9 +707,15 @@ class Chronos:
                             computing yhat.
             
         '''
+        # Make a future dataframe if one is not provided
+        if (future_df is None):
+            future_df = self.make_future_dataframe(period=period, 
+                                                   frequency=frequency, 
+                                                   include_history=include_history)
+
 
         # Transform data into trend and seasonality as before
-        X_trend, X_seasonality, y = self.transform_data_(data)
+        X_trend, X_seasonality, y = self.transform_data_(future_df)
 
         # Create future changepoint markers based on the proportion of changepoints
         # encoutered in the history
@@ -752,11 +779,11 @@ class Chronos:
                 columns_to_return.append(self.target_col_)
 
             columns_to_return.append(self.time_col_)
-            predictions[self.time_col_] = data[self.time_col_]
+            predictions[self.time_col_] = future_df[self.time_col_]
 
             columns_to_return.extend(['yhat', 'yhat_upper', 'yhat_lower', 
                                       'trend', 'trend_upper', 'trend_lower'])
-                                      
+
             return predictions[columns_to_return]
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.method_}")
@@ -767,34 +794,58 @@ class Chronos:
     ########################################################################################################################
     def make_future_dataframe(self, period=30, frequency="D", include_history=True):
         '''
+            A function which takes in a future range specified by the period and the
+            frequency and returns a dataframe which can be used by the predict method.
+            By default, the history is included as well for easy diagnostics via the plotting 
+            methods.
+
+            NOTE: You should only use this method if you plan on adding additional custom
+            regressors. If there are no custom regressors involved you can use the 
+            .predict method directly
 
             Parameters:
             ------------
+            period -            The number of future observations based on
+                                frequency. The default is 30, and the default
+                                for frequency id 'D' which means 30 days ahead
             
+            frequency -         The frequency of the period. See 
+                                https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
+                                for a list of supported freuqncies.
+                                The default is 'D' which stands for calendar 
+                                day
+
+            incldue_history -   A boolean describing whether to include history
+                                observations or not used by the fit method
 
             
             Returns:
             ------------
+            future_df -         A dataframe with a datestamp column, and a 
+                                target column ready to be used by the 
+                                predict method. The datestamp and target
+                                column names are the same as the ones
+                                used in the fitting dataframe.
             
         '''
-        '''
-            Creates a future dataframe based on the specified parameters.
-            
-            Parameters:
-            ------------
-            [period] - int : The number of rows of future data to predict
-            
-        '''
+        # Find the highest timestamp observed, and build a new series of timestamps starting
+        # at that timestamp, then remove the first of that series. The resulting date range
+        # will begin one [frequency] ahead of the last datestamp in history (for example, 
+        # one day after, or one hour after)
         max_date_observed = self.history[self.time_col_].max()
+
         
         date_range = pd.date_range(start=str(max_date_observed), periods=period+1, freq=frequency)
         date_range = date_range[1:]
         
+        # Package everything into a dataframe
         future_df = pd.DataFrame({self.time_col_: date_range,
                                   self.target_col_: [np.nan] * date_range.shape[0]})
         
-        past_df = self.history.copy()
-        future_df = pd.concat([past_df, future_df], axis=0).reset_index(drop=True)
+        # Optionally add the history
+        if (include_history == True):
+            past_df = self.history.copy()
+            future_df = pd.concat([past_df, future_df], axis=0).reset_index(drop=True)
 
         return future_df
     
