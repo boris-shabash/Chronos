@@ -430,11 +430,15 @@ class Chronos:
             extra_changepoint_num = A.shape[1] - deltas.shape[0]
             future_laplace_scale = torch.abs(deltas).mean()
 
-            changepoint_dist = torch.distributions.Laplace(0, future_laplace_scale)
+            if (future_laplace_scale > 0.0):
+                changepoint_dist = torch.distributions.Laplace(0, future_laplace_scale)
             
-            # The future changepoints can be any value from the
-            # inferred Laplace distribution
-            future_deltas = changepoint_dist.sample((extra_changepoint_num,))
+            
+                # The future changepoints can be any value from the
+                # inferred Laplace distribution
+                future_deltas = changepoint_dist.sample((extra_changepoint_num,))
+            else:
+                future_deltas = torch.zeros(extra_changepoint_num)
 
             # Combine the past change rates as 
             # well as future ones
@@ -511,11 +515,12 @@ class Chronos:
 
         # The seasonality is defined as a vector of coefficients
         # over the seasonality component
-        betas = pyro.param(f"betas", torch.zeros(X_seasonality.size(1)))
+        betas = pyro.param(f"betas", torch.rand(X_seasonality.size(1)))
         seasonality = X_seasonality.matmul(betas)
         
         # Finally create a linear combination for the data
         linear_combo = trend + seasonality
+        #print(linear_combo)
         mu = linear_combo
 
             
@@ -851,23 +856,45 @@ class Chronos:
     
     
     ########################################################################################################################
-    def compute_seasonality(self, param_pairs, numeric_values, cycle_period):
+    def compute_seasonality_(self, param_pairs, numeric_values, cycle_period):
         '''
+            A function which accepts a tensor of coefficients in param pairs, the
+            time values and the cycle period, and returns a seasonal (cyclical)
+            tensor of the required seasonality using pairs of sin and cos 
+            calculations.
+
 
             Parameters:
             ------------
+            param_pairs -       A tensor of parameter pairs. The tensor should
+                                always be of shape (N, 2) where N is the order
+                                of the given seasonality.
+
+            numeric_values -    A tensor of the time values to be calculated. 
+                                This can be weekdays, which will range from 0-6, 
+                                month days which will range from 0-30 etc' 
+
+            cycle_periods -     The period of the cycle. For weekdays, the cycle
+                                repeats every 7 days, so the period will be
+                                7. For months, it will be 31. For years, 366, etc'
             
 
             
             Returns:
             ------------
-            
+            seasonality -       The seasonal component specified by
+                                the input parameters. e.g. weekly seasonality,
+                                or yearly seasonality.
         '''
-        seasonality = np.zeros_like(numeric_values, dtype=np.float64)
 
+        seasonality = np.zeros_like(numeric_values, dtype=np.float32)
 
+        # Go through each parameter pair and apply it to
+        # a pair of sin and cos functions defining the
+        # seasonality.
         for i, pair in enumerate(param_pairs):
             cycle_order = i+1
+
             sin_coef = pair[0]
             cosin_coef = pair[1]
             
@@ -877,42 +904,68 @@ class Chronos:
         return seasonality
 
     ########################################################################################################################
-    def get_weekly_seasonality(self):
+    def get_seasonality(self, seasonality_name):
         '''
+            A function which returns a tensor denoting the seasonality requested. If a method not in
+            [MAP, MLE] is requested, the function throws an error
 
             Parameters:
             ------------
+            seasonality_name -  A string denoting the name of the seasonality
+                                requested
             
-
             
             Returns:
             ------------
+            seasonality -       A tensor of shape (7, ) denoting the weekly seasonal patterns
             
         '''
-        if (self.method_ == "MAP"):
-            return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
-        elif (self.method_ == "MLE"):
-            return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
+        if (self.method_ in ["MAP", "MLE"]):
+            if (seasonality_name == "weekly"):
+                return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
+            elif (seasonality_name == "monthly"):
+                return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
+            elif (seasonality_name == "yearly"):
+                return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
     def get_seasonal_params(self, param_name, seasonality_name):
         '''
+            A function which accepts the name of the parameter store where
+            seasonality coefficients are stored, and the seasonality name,
+            and returns the coefficients corresponding to the requested
+            seasonality.
 
             Parameters:
             ------------
-            
+            param_name -            The name of the global param store where
+                                    seasonality is stored.  
+
+            seasonality_name -      The name of the required seasonality. e.g.
+                                    "weekly" or "monthly"
 
             
             Returns:
             ------------
+            seasonality_params -    A tensor of shape (N,2) where N
+                                    is the order of the requested 
+                                    seasonality. This tensor contains
+                                    the seasonality coefficients.
             
         '''
+
         seasonal_params = []
+
+        # Go through all coefficients in param_name and find
+        # those that correspond to the seasonality columns
+        # created for this data
         for i, param in enumerate(pyro.param(param_name)):
             if (seasonality_name in self.seasonality_cols_[i]):
                 seasonal_params.append(param.item())
-                
+
+        # Reshape to have two columns. The parameters are assumed to be
+        # in order (sin_param1, cos_param1, sin_param2, cos_param2, ...) 
         seasonal_params = np.array(seasonal_params).reshape(-1, 2)
 
         return seasonal_params
@@ -947,36 +1000,117 @@ class Chronos:
         fig.update_yaxes(showgrid=False)
 
         return fig
+    
     ########################################################################################################################
     def get_weekly_seasonality_point(self, param_name):
         '''
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the weekly seasonality as well axis labels
 
             Parameters:
             ------------
-            
+            param_name -    The name of the pyro parameter store where the point
+                            estimates are stored
 
             
             Returns:
             ------------
-            
-        '''
-        '''
-            0 = Monday
+            weekly_seasonality -    A pandas dataframe containing three columns:
+                                    X - The values for the weekly seasonality (0-6)
+                                    Label - The labels for the days ("Monday" - "Sunday")
+                                    Y - The seasonal response for each day
         '''
 
+        # Get the parameter pairs of coefficients
         weekly_params = self.get_seasonal_params(param_name, "weekly")
         
+        # Monday is assumed to be 0
         weekdays_numeric = np.arange(0, 7, 1)
         weekdays = chronos_utils.weekday_names_
-        seasonality = self.compute_seasonality(weekly_params, weekdays_numeric, 7)
+
+        # Compute seasonal response
+        seasonality = self.compute_seasonality_(weekly_params, weekdays_numeric, 7)
             
-            
+        # Package everything nicely into a df
         weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
                                            "Label": weekdays,
                                            "Y": seasonality})
         
         return weekly_seasonality
-    
+    ########################################################################################################################
+    def get_monthly_seasonality_point(self, param_name):
+        '''
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the monthly seasonality as well axis labels
+
+            Parameters:
+            ------------
+            param_name -    The name of the pyro parameter store where the point
+                            estimates are stored
+
+            
+            Returns:
+            ------------
+            weekly_seasonality -    A pandas dataframe containing three columns:
+                                    X - The values for the monthly seasonality (0-30)
+                                    Label - The labels for the days ("1st" - "31st")
+                                    Y - The seasonal response for each day
+        '''
+
+        # Get the parameter pairs of coefficients
+        monthly_params = self.get_seasonal_params(param_name, "monthly")
+        
+        monthdays_numeric = np.arange(0, 31, 1)
+        monthday_names = chronos_utils.monthday_names_
+
+        # Compute seasonal response
+        seasonality = self.compute_seasonality_(monthly_params, monthdays_numeric, 31)
+            
+        # Package everything nicely into a df
+        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
+                                            "Label": monthday_names,
+                                            "Y": seasonality})
+        
+        return monthly_seasonality
+
+    ########################################################################################################################
+    def get_yearly_seasonality_point(self, param_name):
+        '''
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the yearly seasonality as well axis labels
+
+            Parameters:
+            ------------
+            param_name -    The name of the pyro parameter store where the point
+                            estimates are stored
+
+            
+            Returns:
+            ------------
+            weekly_seasonality -    A pandas dataframe containing three columns:
+                                    X - The values for the yearly seasonality days (0-366)
+                                    Label - The labels for the days (the individual dates)
+                                    Y - The seasonal response for each day
+        '''
+        
+        # Get the parameter pairs of coefficients
+        yearly_params = self.get_seasonal_params(param_name, "yearly")
+        
+        yeardays_numeric = np.arange(0, 366, 1)
+        yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
+
+        # Compute seasonal response
+        seasonality = self.compute_seasonality_(yearly_params, yeardays_numeric, 366)
+            
+        # Package everything nicely into a df
+        yearly_seasonality = pd.DataFrame({"X": yearly_dates,
+                                           "Label": yearly_dates,
+                                           "Y": seasonality})
+        
+        return yearly_seasonality
     ########################################################################################################################
     def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0, figure_name = None):
         '''
@@ -1007,7 +1141,7 @@ class Chronos:
         current_axs = 0
         axs[0].plot(predictions[self.time_col_], predictions['yhat'], c="green", label="predictions")
         axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color="green", alpha=0.3)
-        axs[0].scatter(predictions[self.time_col_], predictions['y'], c="black", label="observed")
+        axs[0].scatter(predictions[self.time_col_], predictions[self.target_col_], c="black", label="observed")
         axs[0].set_xlabel("Date", size=16)
         axs[0].set_ylabel("Values", size=16)
         current_axs += 1
@@ -1040,18 +1174,19 @@ class Chronos:
         current_axs += 1
 
         if (self.weekly_seasonality_order_ > 0):
-            weekly_seasonality = self.get_weekly_seasonality()
+            '''weekly_seasonality = self.get_seasonality("weekly")
             axs[current_axs].plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
             axs[current_axs].axhline(0.0, c="black", linestyle="--")
             axs[current_axs].set_xticks(weekly_seasonality['X'].values)
             axs[current_axs].set_xticklabels(weekly_seasonality['Label'].values)
             axs[current_axs].set_xlim(-0.1, 6.1)
             axs[current_axs].set_xlabel('Weekday', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)'''
+            self.plot_weekly_seasonality(axs=axs[current_axs])
             current_axs += 1
 
         if (self.month_seasonality_order_ > 0):
-            monthly_seasonality = self.get_monthly_seasonality()
+            monthly_seasonality = self.get_seasonality("monthly")
             axs[current_axs].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
             axs[current_axs].axhline(0.0, c="black", linestyle="--")
             axs[current_axs].set_xticks(monthly_seasonality['X'].values[::9])
@@ -1062,7 +1197,7 @@ class Chronos:
             current_axs += 1
 
         if (self.year_seasonality_order_ > 0):
-            yearly_seasonality = self.get_yearly_seasonality()
+            yearly_seasonality = self.get_seasonality("yearly")
             axs[current_axs].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
             axs[current_axs].axhline(0.0, c="black", linestyle="--")
             axs[current_axs].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
@@ -1085,7 +1220,7 @@ class Chronos:
             plt.savefig(figure_name, dpi=96*4)
         plt.show()
     ########################################################################################################################
-    def plot_weekly_seasonality(self):
+    def plot_weekly_seasonality(self, axs=None):
         '''
 
             Parameters:
@@ -1097,12 +1232,21 @@ class Chronos:
             ------------
             
         '''
-        weekly_seasonality = self.get_weekly_seasonality()
-        plt.figure(figsize=(15,5))
-        plt.plot(weekly_seasonality['Weekday'], weekly_seasonality['Value'])
-        plt.axhline(0.0, c="black")
-        plt.xlim(0.0, 6.0)
-        plt.show();
+        weekly_seasonality = self.get_seasonality("weekly")
+        if (axs is None):
+            fig, axs = plt.subplots(1, 1, figsize=(15, 15))
+        
+        weekly_seasonality = self.get_seasonality("weekly")
+        axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
+        axs.axhline(0.0, c="black", linestyle="--")
+        axs.set_xticks(weekly_seasonality['X'].values)
+        axs.set_xticklabels(weekly_seasonality['Label'].values)
+        axs.set_xlim(-0.1, 6.1)
+        axs.set_xlabel('Weekday', size=18)
+        axs.set_ylabel('Seasonality', size=18)
+
+        if (axs is None):
+            fig.show()
                 
     ########################################################################################################################
     def plot_weekly_seasonality_plotly(self):
@@ -1127,50 +1271,7 @@ class Chronos:
                           title=dict(text="Weekly Seasonality", x = 0.5))
         fig.show()
 
-    ########################################################################################################################
-    def get_monthly_seasonality(self):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        if (self.method_ == "MAP"):
-            return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
-        elif (self.method_ == "MLE"):
-            return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
-        else:
-            raise NotImplementedError("Did not implement monthly seasonality for non MAP non MLE")
-    ########################################################################################################################
-    def get_monthly_seasonality_point(self, param_name):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-
-        monthly_params = self.get_seasonal_params(param_name, "monthly")
-        
-        monthdays_numeric = np.arange(0, 31, 1)
-        monthday_names = chronos_utils.monthday_names_
-        seasonality = self.compute_seasonality(monthly_params, monthdays_numeric, 31)
-            
-        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
-                                            "Label": monthday_names,
-                                            "Y": seasonality})
-        
-        return monthly_seasonality
+    
     ########################################################################################################################
     def plot_monthly_seasonality(self):
         '''
@@ -1214,52 +1315,7 @@ class Chronos:
                           title=dict(text="Monthly Seasonality", x = 0.5))    
         fig.show()
     ########################################################################################################################
-    def get_yearly_seasonality(self):
-        '''
 
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        if (self.method_ == "MAP"):
-            return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
-        elif (self.method_ == "MLE"):
-            return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
-        else:
-            raise NotImplementedError("Did not implement yearly seasonality for non MAP non MLE")
-    ########################################################################################################################
-    def get_yearly_seasonality_point(self, param_name):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-
-        yearly_params = self.get_seasonal_params(param_name, "yearly")
-        
-        yeardays_numeric = np.arange(0, 366, 1)
-        yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
-        seasonality = self.compute_seasonality(yearly_params, yeardays_numeric, 366)
-            
-            
-        yearly_seasonality = pd.DataFrame({"X": yearly_dates,
-                                           "Label": yearly_dates,
-                                           "Y": seasonality})
-        
-        return yearly_seasonality
-    
-    ########################################################################################################################
     def plot_yearly_seasonality(self):
         '''
 
