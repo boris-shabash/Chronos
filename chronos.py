@@ -1186,57 +1186,71 @@ class Chronos:
             current_axs += 1
 
         if (self.month_seasonality_order_ > 0):
-            monthly_seasonality = self.get_seasonality("monthly")
+            '''monthly_seasonality = self.get_seasonality("monthly")
             axs[current_axs].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
             axs[current_axs].axhline(0.0, c="black", linestyle="--")
             axs[current_axs].set_xticks(monthly_seasonality['X'].values[::9])
             axs[current_axs].set_xticklabels(monthly_seasonality['Label'].values[::9])
             axs[current_axs].set_xlim(-0.2, 30.2)
             axs[current_axs].set_xlabel('Day of Month', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)'''
+            self.plot_monthly_seasonality(axs[current_axs])
             current_axs += 1
 
         if (self.year_seasonality_order_ > 0):
-            yearly_seasonality = self.get_seasonality("yearly")
+            '''yearly_seasonality = self.get_seasonality("yearly")
             axs[current_axs].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
             axs[current_axs].axhline(0.0, c="black", linestyle="--")
             axs[current_axs].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
             axs[current_axs].set_xlabel('Day of Year', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)
+            axs[current_axs].set_ylabel('Seasonality', size=18)'''
+            self.plot_yearly_seasonality(axs[current_axs])
             current_axs += 1
 
         
         X = predictions[self.time_col_]
         Y = predictions[self.target_col_]
         Y_hat = predictions['yhat']
-        Y_diff = Y - Y_hat
+        '''Y_diff = Y - Y_hat
         
         axs[current_axs].scatter(trend_X, Y_diff, c="green", s=4, alpha=0.2)
         axs[current_axs].set_xlabel('Date', size=18)
-        axs[current_axs].set_ylabel('Residuals', size=18)
+        axs[current_axs].set_ylabel('Residuals', size=18)'''
+        self.plot_residuals(X, Y, Y_hat, axs[current_axs])
 
-        plt.subplots_adjust(hspace=0.5)
+        plt.subplots_adjust(hspace=1.0)
         if (figure_name is not None):
             plt.savefig(figure_name, dpi=96*4)
         plt.show()
     ########################################################################################################################
     def plot_weekly_seasonality(self, axs=None):
         '''
+            A function which plots the weekly seasonality. An optional axis can be passed in
+            for the drawing to take place on in case a subplot is used. If no matplotlib axis
+            is passed in, the function draws the resulting figure and returns it
+
 
             Parameters:
             ------------
-            
+            axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
+                    on.
 
             
             Returns:
             ------------
-            
+            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
         '''
+
+        # Grab the weekly seasonality
         weekly_seasonality = self.get_seasonality("weekly")
+
+        single_figure = False
+        # Make sure to build a new figure if we don't have one
         if (axs is None):
-            fig, axs = plt.subplots(1, 1, figsize=(15, 15))
+            single_figure = True
+            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
         
-        weekly_seasonality = self.get_seasonality("weekly")
         axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
         axs.axhline(0.0, c="black", linestyle="--")
         axs.set_xticks(weekly_seasonality['X'].values)
@@ -1244,10 +1258,128 @@ class Chronos:
         axs.set_xlim(-0.1, 6.1)
         axs.set_xlabel('Weekday', size=18)
         axs.set_ylabel('Seasonality', size=18)
+        axs.set_title('Weekly Seasonality', size=18)
 
+        if (single_figure):
+            plt.show()
+            return fig
+    ########################################################################################################################
+    def plot_monthly_seasonality(self, axs=None):
+        '''
+            A function which plots the monthly seasonality. An optional axis can be passed in
+            for the drawing to take place on in case a subplot is used. If no matplotlib axis
+            is passed in, the function draws the resulting figure and returns it
+
+
+            Parameters:
+            ------------
+            axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
+                    on.
+
+            
+            Returns:
+            ------------
+            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
+        '''
+        # Grab the monthly seasonality
+        monthly_seasonality = self.get_seasonality("monthly")
+
+
+        single_figure = False
+        # Make sure to build a new figure if we don't have one
         if (axs is None):
-            fig.show()
-                
+            single_figure = True
+            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+
+        axs.plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
+        axs.axhline(0.0, c="black", linestyle="--")
+        axs.set_xticks(monthly_seasonality['X'].values[::9])
+        axs.set_xticklabels(monthly_seasonality['Label'].values[::9])
+        axs.set_xlim(-0.2, 30.2)
+        axs.set_xlabel('Day of Month', size=18)
+        axs.set_ylabel('Seasonality', size=18)
+        axs.set_title("Monthly Seasonality", size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
+
+    ########################################################################################################################
+    def plot_yearly_seasonality(self, axs=None):
+        '''
+            A function which plots the yearly seasonality. An optional axis can be passed in
+            for the drawing to take place on in case a subplot is used. If no matplotlib axis
+            is passed in, the function draws the resulting figure and returns it
+
+
+            Parameters:
+            ------------
+            axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
+                    on.
+
+            
+            Returns:
+            ------------
+            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
+        '''
+        # Grab the yearly seasonality
+        yearly_seasonality = self.get_seasonality("yearly")
+
+        single_figure = False
+        # Make sure to build a new figure if we don't have one
+        if (axs is None):
+            single_figure = True
+            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+
+        axs.plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
+        axs.axhline(0.0, c="black", linestyle="--")
+        axs.set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
+        axs.set_xlabel('Day of Year', size=18)
+        axs.set_ylabel('Seasonality', size=18)
+        axs.set_title('Yearly Seasonality', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
+
+    ########################################################################################################################
+    def plot_residuals(self, x, y_true, y_pred, axs=None):
+        '''
+            A function which plots the residuals of the fit. An optional axis can be passed in
+            for the drawing to take place on in case a subplot is used. If no matplotlib axis
+            is passed in, the function draws the resulting figure and returns it
+
+
+            Parameters:
+            ------------
+            axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
+                    on.
+
+            
+            Returns:
+            ------------
+            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
+        '''
+        y_residuals = y_true - y_pred
+
+        single_figure = False
+        # Make sure to build a new figure if we don't have one
+        if (axs is None):
+            single_figure = True
+            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+        
+        axs.scatter(x, y_residuals, c="green", s=4, alpha=0.2)
+        axs.set_xlabel('Date', size=18)
+        axs.set_ylabel('Residuals', size=18)
+        axs.set_title('Residuals', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
+
     ########################################################################################################################
     def plot_weekly_seasonality_plotly(self):
         '''
@@ -1272,25 +1404,8 @@ class Chronos:
         fig.show()
 
     
-    ########################################################################################################################
-    def plot_monthly_seasonality(self):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        monthly_seasonality = self.get_monthly_seasonality()
-        plt.figure(figsize=(15,5))
-        plt.plot(monthly_seasonality['Monthday'], monthly_seasonality['Value'])
-        plt.axhline(0.0, c="black")
-        plt.xlim(1.0, 30.0)
-        plt.show();
+    
+    
     ########################################################################################################################
     def plot_monthly_seasonality_plotly(self):
         '''
@@ -1314,26 +1429,7 @@ class Chronos:
                                      ticktext = monthly_seasonality['Label']),
                           title=dict(text="Monthly Seasonality", x = 0.5))    
         fig.show()
-    ########################################################################################################################
-
-    def plot_yearly_seasonality(self):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-        yearly_seasonality = self.get_yearly_seasonality()
-        plt.figure(figsize=(15,5))
-        plt.plot(yearly_seasonality['X'], yearly_seasonality['Y'])
-        plt.axhline(0.0, c="black")
-        plt.xlim(1.0, 366.0)
-        plt.show()
+    
         
     ########################################################################################################################
     def plot_yearly_seasonality_plotly(self):

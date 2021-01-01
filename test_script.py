@@ -36,6 +36,7 @@ plt.show()#'''
 
 my_chronos.plot_components(predictions, figure_name="Complete plot.png")
 
-#my_chronos.plot_weekly_seasonality_plotly()
-#my_chronos.plot_monthly_seasonality_plotly()
-#my_chronos.plot_yearly_seasonality_plotly()
+my_chronos.plot_weekly_seasonality()
+my_chronos.plot_monthly_seasonality()
+my_chronos.plot_yearly_seasonality()
+my_chronos.plot_residuals(predictions['ds'], predictions['y'], predictions['yhat'])
