@@ -44,12 +44,17 @@ pyro.enable_validation(True)
 
 torch.set_default_tensor_type(torch.FloatTensor)
 class Chronos:
-    
+    '''
+            
+
+        Parameters:
+        ------------
+        
+
+    '''
     
     def __init__(self, 
                  method="MAP", 
-                 time_col = "ds",
-                 target_col="y", 
                  n_changepoints = 20,
                  year_seasonality_order=10,
                  month_seasonality_order=5,
@@ -58,6 +63,10 @@ class Chronos:
                  changepoint_range = 0.8,
                  changepoint_prior = 0.05,
                  max_iter=1000):
+
+        '''
+            The initialization function. See class docstring for an in-depth explanation of all parameters
+        '''
         
         self.method_ = method
         self.n_iter_ = max_iter
@@ -70,9 +79,6 @@ class Chronos:
         self.year_seasonality_order_ = year_seasonality_order
         self.weekly_seasonality_order_ = weekly_seasonality_order
         self.month_seasonality_order_ = month_seasonality_order
-        
-        self.time_col_ = time_col
-        self.target_col_ = target_col
 
 
         self.ms_to_day_ratio_ = (1e9*60*60*24)
@@ -87,9 +93,9 @@ class Chronos:
 
             Parameters:
             ------------
-            data -  The dataframe with the raw data. Must contain at least one column 
-                    with the timestamp (with dtype np.datetime64). It can optionally
-                    also contain the target column
+            data -          The dataframe with the raw data. Must contain at least one column 
+                            with the timestamp (with dtype np.datetime64). It can optionally
+                            also contain the target column
 
             
             Returns:
@@ -263,18 +269,32 @@ class Chronos:
         return A
 
     ########################################################################################################################
-    def fit(self, data):
+    def fit(self, data, time_col = "ds", target_col="y"):
         '''
+            A function which performs fitting of the required method on the data provided, and thus estimates
+            the parameters of this model.
+
 
             Parameters:
             ------------
-            
+            data -          A pandas dataframe with at least two columns. One specifying the timestamp, and one specifying
+                            the target value (the time series observations). The default expected column names are 'ds' and 'y'
+                            but can be set to other names.
+
+            time_col -      A string denoting the name of the timestamp column.
+
+            target_col -    A string denoting the name of the time series observation column.
 
             
             Returns:
             ------------
+            self -          A fitted Chronos model
             
         '''
+
+        # Record the time-series named columns. We will use them a lot
+        self.time_col_ = time_col
+        self.target_col_ = target_col
         
         # Make a copy of the history
         self.history = data.copy()
@@ -283,11 +303,13 @@ class Chronos:
         #internal_data = self.transform_data_(data)
         X_trend, X_seasonality, y = self.transform_data_(data)
 
-        self.changepoint_proportion = self.n_changepoints_/(X_trend.max() - X_trend.min())
-        self.max_train_time = X_trend.max().item()
+        # Compute the changepoint frequency
+        self.changepoint_frequency = self.n_changepoints_/(X_trend.max() - X_trend.min())
+        self.max_train_time_days = X_trend.max().item()
         
         
-        
+        # Find a set of evenly spaced changepoints in the training data, and 
+        # buid a matrix describing the effect of the changepoints on each timepoint
         self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_, self.changepoint_range_)
         A = self.make_A_matrix(X_trend, self.changepoints)
         
@@ -319,6 +341,8 @@ class Chronos:
             print("Employing Markov Chain Monte Carlo")
             raise NotImplementedError("Did not implement MCMC methods")
         
+
+        return self
             
             
     ########################################################################################################################
@@ -409,22 +433,33 @@ class Chronos:
         print(f"{pct_done}% - ELBO loss: {loss}")
             
     ########################################################################################################################
-    def combine_components(self, X_trend, X_seasonality, A, deltas, gammas):
+    def add_future_changepoints(self, A, deltas):
         '''
+            A function which accepts a changepoint matrix, and a changepoint rate change tensor
+            and adds compares their sizes. If the matrix A specifies more changepoints than
+            deltas, new changepoint values are added to deltas. Otherwise deltas is unchanged
+
+            The additions to deltas are randomly drawn from a Laplace distribution since
+            they are simulations of potential future changepoints, and thus are not fixed.
 
             Parameters:
             ------------
+            A -                 The changepoint matrix defining, for each time stamp,
+                                which changepoints occured
+
+            deltas -            A 1D tensor specifying the increase, or decrease, in slope
+                                at each changepoint. The size is (S, ) where S is the number
+                                of changepoints
             
 
             
             Returns:
             ------------
+            deltas -            A new 1D tensor which contains the increase, or decrease, in slope
+                                for both past and future changepoints. If A is the same size
+                                as deltas coming in, the deltas tensor is unchanged
             
         '''
-        pass
-    ########################################################################################################################
-    def add_future_changepoints(self, A, deltas):
-
         if (A.shape[1] > deltas.shape[0]):
             # Infer future changepoint number
             extra_changepoint_num = A.shape[1] - deltas.shape[0]
@@ -448,17 +483,48 @@ class Chronos:
 
     ########################################################################################################################
     def compute_trend(self, X_trend, slope_init, intercept_init, A, deltas, changepoints):
+        '''
+            A function which computes the trend component of the model. i.e. the growth
+            excluding any seasonalities
+
+
+            Parameters:
+            ------------
+            
+            X_trend -           The time tensor specifying the time regressor
+
+            slope_init -        The intial slope, or growth ratem value
+
+            intercept_init -    The intial intercept, or constant, value
+
+            A -                 The changepoint matrix defining, for each time stamp,
+                                which changepoints occured
+
+            deltas -            A 1D tensor specifying the increase, or decrease, in slope
+                                at each changepoint. The size is (S, ) where S is the number
+                                of changepoints
+
+
+            changepoints -      A tensor of timestamps, in days, of when each changepoint occurs
+
+            
+            Returns:
+            ------------
+            trend -             A 1D tensor of the trend, or growth, excluding any seasonalities
+            
+        '''   
+
 
         # To adjust the rates we also need to adjust the displacement during each rate change
-        gammas = -deltas * changepoints
+        intercept_adjustments = -deltas * changepoints
 
         # There is a unique slope value and intercept value for each
         # timepoint to create a piece-wise function
         slope = slope_init + torch.matmul(A, deltas)
-        intercept = intercept_init + torch.matmul(A, gammas)
+        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
 
 
-        # Finall compute the trend component and record it in the global
+        # Finally compute the trend component and record it in the global
         # parameter store using the pyro.deterministic command
         trend = slope * X_trend + intercept
         pyro.deterministic('trend', trend)
@@ -698,18 +764,18 @@ class Chronos:
             
             Returns:
             ------------
-            predictions -   A dataframe with:
-                            [time_col] -    The time column fed into this method
-                            [target_col] -  The name for the original target column if history is included in the dataframe
-                            yhat -          The predicted value for observations
-                            yhat_upper -    The upper value for uncertainty + credibility interval
-                            yhat_lower -    The lower value for uncertainty + credibility interval
-                            trend -         The predicted value for the trend, excluding seasonality
-                            trend_upper -   The upper value for trend uncertainty
-                            trend_lower -   The lower value for trend uncertainty
+            predictions -       A dataframe with:
+                                [time_col] -    The time column fed into this method
+                                [target_col] -  The name for the original target column if history is included in the dataframe
+                                yhat -          The predicted value for observations
+                                yhat_upper -    The upper value for uncertainty + credibility interval
+                                yhat_lower -    The lower value for uncertainty + credibility interval
+                                trend -         The predicted value for the trend, excluding seasonality
+                                trend_upper -   The upper value for trend uncertainty
+                                trend_lower -   The lower value for trend uncertainty
 
-                            Seasonality is not returned in the dataframe, but is incorporated when
-                            computing yhat.
+                                Seasonality is not returned in the dataframe, but is incorporated when
+                                computing yhat.
             
         '''
         # Make a future dataframe if one is not provided
@@ -724,13 +790,13 @@ class Chronos:
 
         # Create future changepoint markers based on the proportion of changepoints
         # encoutered in the history
-        future_changepoint_number = self.changepoint_proportion * (X_trend.max() - self.max_train_time)
+        future_changepoint_number = self.changepoint_frequency * (X_trend.max() - self.max_train_time_days)
         future_changepoint_number = round(future_changepoint_number.item())
 
         future_changepoint_positions = self.find_changepoint_positions(X_trend, 
                                                                        future_changepoint_number, 
                                                                        1.0,
-                                                                       min_value = self.max_train_time, 
+                                                                       min_value = self.max_train_time_days, 
                                                                        drop_first = False)
 
         # Combine past and future changepoints
@@ -969,37 +1035,6 @@ class Chronos:
         seasonal_params = np.array(seasonal_params).reshape(-1, 2)
 
         return seasonal_params
-    ########################################################################################################################
-    def get_seasonal_plotly_figure(self, seasonality_df):
-        '''
-
-            Parameters:
-            ------------
-            
-
-            
-            Returns:
-            ------------
-            
-        '''
-
-        data_trace = go.Scatter(x=seasonality_df['X'], 
-                                y=seasonality_df['Y'], 
-                                mode="lines+markers",
-                                marker=dict(color='Green', symbol="diamond"),
-                                line=dict(width=3))
-
-        trace_0 = go.Scatter(x=seasonality_df['X'],
-                             y=[0]*seasonality_df.shape[0],
-                             mode="lines",
-                             line=dict(width=3, color="Black"))
-        fig = go.Figure(
-            data=[data_trace, trace_0])
-
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=False)
-
-        return fig
     
     ########################################################################################################################
     def get_weekly_seasonality_point(self, param_name):
@@ -1010,8 +1045,8 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -    The name of the pyro parameter store where the point
-                            estimates are stored
+            param_name -            The name of the pyro parameter store where the point
+                                    estimates are stored
 
             
             Returns:
@@ -1047,8 +1082,8 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -    The name of the pyro parameter store where the point
-                            estimates are stored
+            param_name -            The name of the pyro parameter store where the point
+                                    estimates are stored
 
             
             Returns:
@@ -1084,8 +1119,8 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -    The name of the pyro parameter store where the point
-                            estimates are stored
+            param_name -            The name of the pyro parameter store where the point
+                                    estimates are stored
 
             
             Returns:
@@ -1112,19 +1147,33 @@ class Chronos:
         
         return yearly_seasonality
     ########################################################################################################################
-    def plot_components(self, predictions, residuals=False, changepoint_threshold = 0.0, figure_name = None):
+    def plot_components(self, predictions, changepoint_threshold = 0.0, figure_name = None, figsize=(15,15)):
         '''
+            A function to plot all components of the predictions into a matplotlib figure. 
+            The resulting figure will have the raw predictions, the trend, all different seasonalities,
+            and the residuals (the error terms) from the prediction process.
+
 
             Parameters:
             ------------
-            
+            predictions -           A pandas dataframe returned from the .predict method of this Chronos object.
+                                    The dataframe is expected to have the same columns as the dataframe used for 
+                                    fitting as well as the following columns: 
+                                    yhat, yhat_upper, yhat_lower, trend, trend_upper, trend_lower
 
+            changepoint_threshold - The threshold for the changepoints to be marked on the plot. Must be a non-negative
+
+            figure_name -           An optional parameter for the figure name for it to be saved. E.g. "myfig.png"
+            
+            figsize -               The figure size to use
             
             Returns:
             ------------
+            fig -                   The figure object on which all the plotting takes place
             
         '''
         
+        # Count how many plots we will need
         plot_num = 3
         if self.weekly_seasonality_order_ > 0:
             plot_num += 1
@@ -1134,10 +1183,12 @@ class Chronos:
             plot_num += 1
 
 
-
         
-        fig, axs = plt.subplots(plot_num, 1, figsize=(15, 15))
+        # Create the corresponding subplot canvas
+        fig, axs = plt.subplots(plot_num, 1, figsize=figsize)
 
+
+        # Start by plotting the results of the fitting process
         current_axs = 0
         axs[0].plot(predictions[self.time_col_], predictions['yhat'], c="green", label="predictions")
         axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color="green", alpha=0.3)
@@ -1146,82 +1197,127 @@ class Chronos:
         axs[0].set_ylabel("Values", size=16)
         current_axs += 1
 
-        ########## TREND ########################################################################
-        const = pyro.param(f'{self.param_prefix_}intercept').detach()
-        growth = pyro.param(f'{self.param_prefix_}trend_slope').detach()
-        #const, growth = pyro.param(self.param_name_).detach().numpy()[:2]
-        trend_X = predictions[self.time_col_]
-        trend_Y = predictions['trend']
+        # Plot the trend
+        self.plot_trend(x = predictions[self.time_col_], 
+                        trend = predictions['trend'], 
+                        changepoint_threshold = changepoint_threshold, 
+                        trend_upper = predictions['trend_upper'], 
+                        trend_lower = predictions['trend_lower'], 
+                        axs = axs[current_axs])
+        
+        current_axs += 1
+
+
+        # Plot all seasonalities. Each into an individual subplot
+        if (self.weekly_seasonality_order_ > 0):
+            self.plot_weekly_seasonality(axs=axs[current_axs])
+            current_axs += 1
+
+        if (self.month_seasonality_order_ > 0):
+            self.plot_monthly_seasonality(axs[current_axs])
+            current_axs += 1
+
+        if (self.year_seasonality_order_ > 0):
+            self.plot_yearly_seasonality(axs[current_axs])
+            current_axs += 1
+
+
+        # Finally, plot the residuals        
+        X = predictions[self.time_col_]
+        Y = predictions[self.target_col_]
+        Y_hat = predictions['yhat']
+        self.plot_residuals(X, Y, Y_hat, axs[current_axs])
+
+
+        # Adjust the spacing between the subplots so differnet text components 
+        # do not overwrite each other
+        plt.subplots_adjust(hspace=1.0)
+
+        # Optionally save the figure
+        if (figure_name is not None):
+            plt.savefig(figure_name, dpi=96*4)
 
         
-        
-        axs[current_axs].plot(trend_X, trend_Y, linewidth=3, c="green")
-        axs[current_axs].fill_between(trend_X, predictions['trend_upper'], predictions['trend_lower'], color="green", alpha=0.3)
+        plt.show()
 
+        return fig
+    ########################################################################################################################
+    def plot_trend(self, x, trend, changepoint_threshold=0.0, trend_upper=None, trend_lower=None, predictions_start_date = None, axs=None):
+        '''
+            A function which plots the trend components, along with historical changepoints. 
+            An optional axis can be passed in for the drawing to take place on in case a subplot is used.
+            If no matplotlib axis is passed in, the function draws the resulting figure and returns it
+
+
+            Parameters:
+            ------------
+            x -                     A tensor containing the timestamps, in days, for the period for which
+                                    plotting is desired
+
+            trend -                 A tensor containing the trend values, excluding all seasonalities
+
+            changepoint_threshold - The threshold for the value of a changepoint for it to be marked
+                                    on the plot
+
+            trend_upper -           A tensor containing the upper uncertainty value for the trend. If None
+                                    no uncertainty is plotted. Both trend_upper and trend_lower must be 
+                                    specified if uncertainty is desired
+
+            trend_lower -           A tensor containing the lower uncertainty value for the trend
+
+            prediction_start_time - The start time to mark for the prediction. If None, the highest
+                                    value seen in the training set is used
+
+            axs -                   Optional argument, a matplotlib subplot axis for the drawing to take place
+                                    on.
+
+            
+            Returns:
+            ------------
+            fig -                   An optional return value. If no axis is passed in as an argument, a new
+                                    figure is created and returned upon drawing.
+        '''
+
+
+        single_figure = False
+        # Make sure to build a new figure if we don't have one
+        if (axs is None):
+            single_figure = True
+            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+
+
+        axs.plot(x, trend, linewidth=3, c="green")
+
+        # Optionally draw uncertainty trend
+        if (trend_upper is not None):
+            axs.fill_between(x, trend_upper, trend_lower, color="green", alpha=0.3)
+
+        # Optionally draw changepoints
         for index, changepoint in enumerate(self.changepoints):
             
             changepoint_value = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
             changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_value)
 
             if (abs(changepoint_value) >= changepoint_threshold):
-                axs[current_axs].axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
+                axs.axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
         
-        # Find the date where history ends and predictions start
-        predictions_start = predictions[predictions[self.target_col_].isna()][self.time_col_].min()
-        axs[current_axs].axvline(datetime.date(predictions_start.year, predictions_start.month, predictions_start.day), c="black", linestyle="--")
-        axs[current_axs].set_xlabel('Date', size=18)
-        axs[current_axs].set_ylabel('Growth', size=18)
-        current_axs += 1
-
-        if (self.weekly_seasonality_order_ > 0):
-            '''weekly_seasonality = self.get_seasonality("weekly")
-            axs[current_axs].plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
-            axs[current_axs].axhline(0.0, c="black", linestyle="--")
-            axs[current_axs].set_xticks(weekly_seasonality['X'].values)
-            axs[current_axs].set_xticklabels(weekly_seasonality['Label'].values)
-            axs[current_axs].set_xlim(-0.1, 6.1)
-            axs[current_axs].set_xlabel('Weekday', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)'''
-            self.plot_weekly_seasonality(axs=axs[current_axs])
-            current_axs += 1
-
-        if (self.month_seasonality_order_ > 0):
-            '''monthly_seasonality = self.get_seasonality("monthly")
-            axs[current_axs].plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
-            axs[current_axs].axhline(0.0, c="black", linestyle="--")
-            axs[current_axs].set_xticks(monthly_seasonality['X'].values[::9])
-            axs[current_axs].set_xticklabels(monthly_seasonality['Label'].values[::9])
-            axs[current_axs].set_xlim(-0.2, 30.2)
-            axs[current_axs].set_xlabel('Day of Month', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)'''
-            self.plot_monthly_seasonality(axs[current_axs])
-            current_axs += 1
-
-        if (self.year_seasonality_order_ > 0):
-            '''yearly_seasonality = self.get_seasonality("yearly")
-            axs[current_axs].plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
-            axs[current_axs].axhline(0.0, c="black", linestyle="--")
-            axs[current_axs].set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
-            axs[current_axs].set_xlabel('Day of Year', size=18)
-            axs[current_axs].set_ylabel('Seasonality', size=18)'''
-            self.plot_yearly_seasonality(axs[current_axs])
-            current_axs += 1
-
+        # Optionally mark where history ends and predictions begin
+        if (predictions_start_date is None):
+            predictions_start_date = datetime.datetime.fromtimestamp(self.max_train_time_days * self.ms_to_day_ratio_/1e9)
         
-        X = predictions[self.time_col_]
-        Y = predictions[self.target_col_]
-        Y_hat = predictions['yhat']
-        '''Y_diff = Y - Y_hat
-        
-        axs[current_axs].scatter(trend_X, Y_diff, c="green", s=4, alpha=0.2)
-        axs[current_axs].set_xlabel('Date', size=18)
-        axs[current_axs].set_ylabel('Residuals', size=18)'''
-        self.plot_residuals(X, Y, Y_hat, axs[current_axs])
+        axs.axvline(datetime.date(predictions_start_date.year, 
+                                    predictions_start_date.month, 
+                                    predictions_start_date.day), c="black", linestyle="--")
 
-        plt.subplots_adjust(hspace=1.0)
-        if (figure_name is not None):
-            plt.savefig(figure_name, dpi=96*4)
-        plt.show()
+        axs.set_xlabel('Date', size=18)
+        axs.set_ylabel('Growth', size=18)
+
+        axs.set_title('Trend', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
+
     ########################################################################################################################
     def plot_weekly_seasonality(self, axs=None):
         '''
@@ -1238,7 +1334,7 @@ class Chronos:
             
             Returns:
             ------------
-            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+            fig -   An optional return value. If no axis is passed in as an argument, a new
                     figure is created and returned upon drawing.
         '''
 
@@ -1279,7 +1375,7 @@ class Chronos:
             
             Returns:
             ------------
-            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+            fig -   An optional return value. If no axis is passed in as an argument, a new
                     figure is created and returned upon drawing.
         '''
         # Grab the monthly seasonality
@@ -1321,7 +1417,7 @@ class Chronos:
             
             Returns:
             ------------
-            fig -   An optional return parameter. If no axis is passed in as an argument, a new
+            fig -   An optional return value. If no axis is passed in as an argument, a new
                     figure is created and returned upon drawing.
         '''
         # Grab the yearly seasonality
@@ -1354,14 +1450,22 @@ class Chronos:
 
             Parameters:
             ------------
-            axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                    on.
+            x -         A 1D tensor or array containg the timestamp measurements for the time
+                        series
+
+            y_true -    A 1D tensor or array containing the true observations for the time series
+
+            y_pred -    A 1D tensor or array containing the values predicted by this Chronos object
+
+
+            axs -       Optional argument, a matplotlib subplot axis for the drawing to take place
+                        on.
 
             
             Returns:
             ------------
-            fig -   An optional return parameter. If no axis is passed in as an argument, a new
-                    figure is created and returned upon drawing.
+            fig -       An optional return value. If no axis is passed in as an argument, a new
+                        figure is created and returned upon drawing.
         '''
         y_residuals = y_true - y_pred
 
@@ -1380,6 +1484,38 @@ class Chronos:
             plt.show()
             return fig
 
+    ########################################################################################################################
+    def get_seasonal_plotly_figure(self, seasonality_df):
+        '''
+
+            Parameters:
+            ------------
+            
+
+            
+            Returns:
+            ------------
+            
+        '''
+
+        data_trace = go.Scatter(x=seasonality_df['X'], 
+                                y=seasonality_df['Y'], 
+                                mode="lines+markers",
+                                marker=dict(color='Green', symbol="diamond"),
+                                line=dict(width=3))
+
+        trace_0 = go.Scatter(x=seasonality_df['X'],
+                             y=[0]*seasonality_df.shape[0],
+                             mode="lines",
+                             line=dict(width=3, color="Black"))
+        fig = go.Figure(
+            data=[data_trace, trace_0])
+
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(showgrid=False)
+
+        return fig
+    
     ########################################################################################################################
     def plot_weekly_seasonality_plotly(self):
         '''
