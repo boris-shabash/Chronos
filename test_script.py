@@ -34,7 +34,7 @@ plt.show()#'''
 
 #assert(False)
 
-my_chronos.plot_components(predictions, figure_name="Complete plot.png")
+my_chronos.plot_components(predictions, figure_name="Complete_plot.png")
 
 my_chronos.plot_trend(predictions['ds'], predictions['trend'])
 my_chronos.plot_weekly_seasonality()

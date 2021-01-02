@@ -27,7 +27,6 @@ from torch.optim import SGD, Rprop, Adam
 from torch.distributions import constraints
 
 
-# We will use Markov Chain Monte Carlo (MCMC) methods here, specifically the No U-Turn Sampler (NUTS)
 from pyro.infer import MCMC, NUTS
 from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
@@ -49,7 +48,15 @@ class Chronos:
 
         Parameters:
         ------------
-        
+        method -                    a
+        n_changepoints -            a
+        year_seasonality_order -    a
+        month_seasonality_order -   a
+        weekly_seasonality_order -  a
+        learning_rate -             a
+        changepoint_range -         a
+        changepoint_prior -         a
+        max_iter -                  a
 
     '''
     
