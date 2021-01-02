@@ -100,7 +100,7 @@ class Chronos:
             
             Returns:
             ------------
-            X_trend -       A tensor of shape (n_samples, ), where n_samples
+            X_time -        A tensor of shape (n_samples, ), where n_samples
                             is the number of samples in data
 
             X_seasonality - A tensor of shape (n_samples, M) where n_samples
@@ -161,7 +161,7 @@ class Chronos:
         internal_data = internal_data.drop(['weekday', 'monthday', 'yearday'], axis=1)
 
         # Finally, grab the data and make it into tensors
-        X_trend = torch.tensor(internal_data[self.time_col_].values, dtype=torch.float32)
+        X_time = torch.tensor(internal_data[self.time_col_].values, dtype=torch.float32)
         X_seasonality = torch.tensor(internal_data[self.seasonality_cols_].values , dtype=torch.float32)
 
         # If we don't have a target column (i.e. we're predicting), don't try and grab it
@@ -170,10 +170,10 @@ class Chronos:
         else:
             y = None
         
-        return X_trend, X_seasonality, y
+        return X_time, X_seasonality, y
         
     ########################################################################################################################
-    def find_changepoint_positions(self, X_trend, changepoint_num, changepoint_range, min_value = None, drop_first = True):
+    def find_changepoint_positions(self, X_time, changepoint_num, changepoint_range, min_value = None, drop_first = True):
         '''
             A function which takes a tensor of the time, expressed in days, and the
             number oc changepoints to find, and finds the desired number of changepoints.
@@ -181,7 +181,7 @@ class Chronos:
 
             Parameters:
             ------------
-            X_trend -           A tensor of the time, expressed in days. The days
+            X_time -            A tensor of the time, expressed in days. The days
                                 need not be consecutive, or evenly spaced.
 
             changepoint_num -   The number of changepoints to find
@@ -207,10 +207,10 @@ class Chronos:
         
         # Set the minimum value in case it is None
         if (min_value is None):
-            min_value = X_trend.min().item()
+            min_value = X_time.min().item()
         
         # Find the maximum value available in the data
-        max_value_in_data = X_trend.max().item() 
+        max_value_in_data = X_time.max().item() 
 
         # We usually don't want to consider the entire range, so we only
         # consider a certain section, dictated by changepoint_range
@@ -233,7 +233,7 @@ class Chronos:
         return changepoints
         
     ########################################################################################################################
-    def make_A_matrix(self, X_trend, changepoints):
+    def make_A_matrix(self, X_time, changepoints):
         '''
             A function which takes in the time tensor, and the changepoints
             chosen, and produces a matrix A which specifies when to add the
@@ -241,7 +241,7 @@ class Chronos:
 
             Parameters:
             ------------
-            X_trend -       A tensor of the time, in days
+            X_time -        A tensor of the time, in days
 
             changepoints -  A tensor of changepoints where each element
                             is a day when a changepoint can happen
@@ -249,22 +249,22 @@ class Chronos:
             Returns:
             ------------
             A -             A tensor of shape (n_samples, S), where n_samples
-                            is the number of samples in X_trend, and S
+                            is the number of samples in X_time, and S
                             is the number of changepoints
         '''
 
         
-        A = torch.zeros((X_trend.shape[0], len(changepoints)))
+        A = torch.zeros((X_time.shape[0], len(changepoints)))
 
         # For each row t and column j,
-        # A(t, j) = 1 if X_trend[t] >= changepoints[j]. i.e. if the current time 
+        # A(t, j) = 1 if X_time[t] >= changepoints[j]. i.e. if the current time 
         # denoted by that row is greater or equal to the time of the most recent
         # changepoint
-        for t, row in enumerate(A):
-            for j, col in enumerate(row):
-                if (changepoints[j] <= X_trend[t]):
-                    A[t, j] = 1.0
 
+        for j in range(A.shape[1]):
+            row_mask = (X_time >= changepoints[j])
+            A[row_mask, j] = 1.0
+            
         
         return A
 
@@ -301,17 +301,17 @@ class Chronos:
         
         # Transform the data by adding seasonality
         #internal_data = self.transform_data_(data)
-        X_trend, X_seasonality, y = self.transform_data_(data)
+        X_time, X_seasonality, y = self.transform_data_(data)
 
         # Compute the changepoint frequency
-        self.changepoint_frequency = self.n_changepoints_/(X_trend.max() - X_trend.min())
-        self.max_train_time_days = X_trend.max().item()
+        self.changepoint_frequency = self.n_changepoints_/(X_time.max() - X_time.min())
+        self.max_train_time_days = X_time.max().item()
         
         
         # Find a set of evenly spaced changepoints in the training data, and 
         # buid a matrix describing the effect of the changepoints on each timepoint
-        self.changepoints = self.find_changepoint_positions(X_trend, self.n_changepoints_, self.changepoint_range_)
-        A = self.make_A_matrix(X_trend, self.changepoints)
+        self.changepoints = self.find_changepoint_positions(X_time, self.n_changepoints_, self.changepoint_range_)
+        A = self.make_A_matrix(X_time, self.changepoints)
         
         
         
@@ -333,7 +333,7 @@ class Chronos:
                 warnings.simplefilter("ignore")
                 self.train_point_estimate(self.model, 
                                           self.guide,
-                                          X_trend,
+                                          X_time,
                                           X_seasonality,
                                           A,
                                           y)
@@ -353,7 +353,7 @@ class Chronos:
         pass
     
     ########################################################################################################################
-    def train_point_estimate(self, model, guide, X_trend, X_seasonality, A, y):
+    def train_point_estimate(self, model, guide, X_time, X_seasonality, A, y):
         '''
         A function which takes in the model and guide to use for
         the training of point estimates of the parameters, as well as
@@ -369,7 +369,7 @@ class Chronos:
                         to the model and how to employ them to sample
                         from the distributions in the model. Usually a function
 
-        X_trend -       The time tensor specifying the time regressor
+        X_time -        The time tensor specifying the time regressor
 
         X_seasonality - The seasonality tensor specifying all cyclical regressors
 
@@ -410,7 +410,7 @@ class Chronos:
         # Iterate through the optimization
         for step in range(self.n_iter_):
             
-            loss = self.svi_.step(X_trend, 
+            loss = self.svi_.step(X_time, 
                                   X_seasonality, 
                                   A, 
                                   self.changepoints, 
@@ -433,8 +433,10 @@ class Chronos:
         print(f"{pct_done}% - ELBO loss: {loss}")
             
     ########################################################################################################################
-    def add_future_changepoints(self, A, deltas):
+    def add_future_changepoints_deprecate(self, A, deltas):
         '''
+            NOTE: DEPRECATE FUNCTION
+
             A function which accepts a changepoint matrix, and a changepoint rate change tensor
             and adds compares their sizes. If the matrix A specifies more changepoints than
             deltas, new changepoint values are added to deltas. Otherwise deltas is unchanged
@@ -480,9 +482,146 @@ class Chronos:
             deltas = torch.cat([deltas, future_deltas])
 
         return deltas
+    ########################################################################################################################
+    def add_future_changepoints(self, past_deltas, future_trend_period):
+        '''
+            A function which accepts a changepoint matrix, and a changepoint rate change tensor
+            and adds compares their sizes. If the matrix A specifies more changepoints than
+            deltas, new changepoint values are added to deltas. Otherwise deltas is unchanged
+
+            The additions to deltas are randomly drawn from a Laplace distribution since
+            they are simulations of potential future changepoints, and thus are not fixed.
+            Each run of this function is designed to be a single possible future.
+
+            Parameters:
+            ------------
+            A -                     The changepoint matrix defining, for each time stamp,
+                                    which changepoints occured
+
+            past_deltas -           A 1D tensor specifying the increase, or decrease, in slope
+                                    at each changepoint. The size is (S, ) where S is the number
+                                    of changepoints
+
+            future_trend_period -   The duration of the future trend, in days. This is the
+                                    number of days the future trend spans, not the number 
+                                    of observations (for example, there can be two 
+                                    observations, 15 days apart, so the period will
+                                    be 15 days)
+            
+
+            
+            Returns:
+            ------------
+            deltas -                A new 1D tensor which contains the increase, or decrease, in slope
+                                    for both past and future changepoints. If A is the same size
+                                    as deltas coming in, the deltas tensor is unchanged
+            
+        '''
+
+        # Find the number of future changepoints in this simulation
+        probabilities = torch.tensor([self.changepoint_frequency] * future_trend_period)
+        
+        extra_changepoint_num = int(torch.bernoulli(probabilities).sum().item())
+
+        
+        
+        # Infer future changepoint scale
+        future_laplace_scale = torch.abs(past_deltas).mean()
+
+        if (future_laplace_scale > 0.0):
+            changepoint_dist = torch.distributions.Laplace(0, future_laplace_scale)
+        
+        
+            # The future changepoints can be any value from the
+            # inferred Laplace distribution
+            future_deltas = changepoint_dist.sample((extra_changepoint_num,))
+        else:
+            future_deltas = torch.zeros(extra_changepoint_num)
+
+        # Combine the past change rates as 
+        # well as future ones
+        deltas = torch.cat([past_deltas, future_deltas])
+
+        
+        return deltas
 
     ########################################################################################################################
-    def compute_trend(self, X_trend, slope_init, intercept_init, A, deltas, changepoints):
+    def simulate_potential_future(self, X_time, past_deltas, past_changepoints, A):
+        '''
+            A function which simulates a potential future to account for future
+            changepoints over X_time. The future may or may not contain changepoints
+            and so a single run of this function simulates a potential future
+            where additional changepoints are added. 
+            X_time can contain the time tensor for both past and future
+
+
+            Parameters:
+            ------------
+            
+            X_time -            The time tensor specifying the time regressor
+
+
+            past_deltas -       A 1D tensor specifying the increase, or decrease, in slope
+                                at each changepoint. The size is (S, ) where S is the number
+                                of changepoints in the past, and not for the entire duration
+                                of X_time
+
+            past_changepoints - A tensor of timestamps, in days, of when each changepoint occurs.
+                                Only accounts for changepoints in the past
+
+            A -                 The changepoint matrix defining, for each time stamp,
+                                which changepoints occured. 
+                                It may get recreated during the run, but since that is
+                                probabilistic it is provided in case it need not be
+                                modified
+
+            
+            Returns:
+            ------------
+            A tuple of (deltas, combined_changepoints, A)
+
+            deltas -                A 1D tensor of the rate adjustments for the entire time of
+                                    X_time.
+            
+            combined_changepoints - A 1D Tensor specifing the times, in days, where each changepoint
+                                    occurs. May be the same size as past_changepoints if no new
+                                    changepoints have been simulated
+            
+            A -                     A 2D Matrix which defines how changepoints relate to the trend.
+                                    May be different from the size provided when A is an input, but
+                                    may remain the same, in which case the input matrix is returned.
+            
+        '''  
+        # Simulate potential changepoint generation
+        future_trend_point_number = int(X_time.max() - self.max_train_time_days)
+        deltas = self.add_future_changepoints(past_deltas, future_trend_point_number)
+
+        # Count the number of future changepoints simulated
+        future_changepoint_number = int(deltas.shape[0] - self.n_changepoints_)
+
+        # If we need to simulate a certain number of future changepoints,
+        # we will randomly draw their positions and create a new A
+        # matrix to be used to correct the trend.
+        # Otherwise, we can continue as usual
+        if (future_changepoint_number > 0):
+            first_future_trend_value = int(X_time[-future_trend_point_number].item())
+            last_future_trend_value = int(X_time[-1].item())
+
+            
+            future_changepoints = torch.randint(low = first_future_trend_value, 
+                                                high = last_future_trend_value, 
+                                                size = (future_changepoint_number, )).type(torch.float32)
+            
+            combined_changepoints = torch.cat([past_changepoints, future_changepoints])
+
+            A = self.make_A_matrix(X_time, combined_changepoints)
+        else:
+            combined_changepoints = past_changepoints
+        
+        return deltas, combined_changepoints, A
+
+    ########################################################################################################################
+    def compute_trend(self, X_time, slope_init, intercept_init, A, deltas, changepoints):
         '''
             A function which computes the trend component of the model. i.e. the growth
             excluding any seasonalities
@@ -491,7 +630,7 @@ class Chronos:
             Parameters:
             ------------
             
-            X_trend -           The time tensor specifying the time regressor
+            X_time -            The time tensor specifying the time regressor
 
             slope_init -        The intial slope, or growth ratem value
 
@@ -526,14 +665,14 @@ class Chronos:
 
         # Finally compute the trend component and record it in the global
         # parameter store using the pyro.deterministic command
-        trend = slope * X_trend + intercept
+        trend = slope * X_time + intercept
         pyro.deterministic('trend', trend)
 
         return trend
 
     ########################################################################################################################
     
-    def model_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):  
+    def model_MLE_(self, X_time, X_seasonality, A, changepoints, y=None):  
         '''
             A function which defined a linear model over the trend and seasonality 
             components along with a set of potential changepoints. 
@@ -544,7 +683,7 @@ class Chronos:
             Parameters:
             ------------
             
-            X_trend -       The time tensor specifying the time regressor
+            X_time -        The time tensor specifying the time regressor
 
             X_seasonality - The seasonality tensor specifying all cyclical regressors
 
@@ -569,15 +708,24 @@ class Chronos:
         slope_init = pyro.param("trend_slope", torch.tensor(0.0))
 
         # define slope change values for each changepoint
-        deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
+        past_deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
 
-        # If the matrix specifies more changepoints than have been 
-        # observed we have to generate the additional changepoints
-        # for the prediction
-        deltas = self.add_future_changepoints(A, deltas)
-            
+
+        # If no observations are given, we assume we are in
+        # prediction mode. Therefore, we have to generate possible scenarios
+        # for the future changepoints as a simulation
+
+        
+        if (y is None):
+            deltas, combined_changepoints, A = self.simulate_potential_future(X_time, past_deltas, changepoints, A)
+        else:
+            # If we are not in prediction mode, we only care about learning the past
+            deltas = past_deltas
+            combined_changepoints = changepoints
+        
+        
         # Compute the trend
-        trend = self.compute_trend(X_trend, slope_init, intercept_init, A, deltas, changepoints)
+        trend = self.compute_trend(X_time, slope_init, intercept_init, A, deltas, combined_changepoints)
 
         # The seasonality is defined as a vector of coefficients
         # over the seasonality component
@@ -606,14 +754,14 @@ class Chronos:
         # Finally sample from the likelihood distribution and
         # optionally condition on the observed values. 
         # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_trend.size(0)):
+        with pyro.plate("data", X_time.size(0)):
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
             
         return mu
         
         
     ########################################################################################################################
-    def guide_MLE_(self, X_trend, X_seasonality, A, changepoints, y=None):
+    def guide_MLE_(self, X_time, X_seasonality, A, changepoints, y=None):
         '''
             A function which specifies a special guide which does nothing.
             This guide is used in MLE optimization since there is no
@@ -623,7 +771,7 @@ class Chronos:
             Parameters:
             ------------
             
-            X_trend -       The time tensor specifying the time regressor
+            X_time -       The time tensor specifying the time regressor
 
             X_seasonality - The seasonality tensor specifying all cyclical regressors
 
@@ -646,7 +794,7 @@ class Chronos:
     
     ########################################################################################################################
     ########################################################################################################################    
-    def model_MAP_(self, X_trend, X_seasonality, A, changepoints, y=None):
+    def model_MAP_(self, X_time, X_seasonality, A, changepoints, y=None):
         '''
             A function which defined a linear model over the trend and seasonality 
             components along with a set of potential changepoints. 
@@ -656,12 +804,16 @@ class Chronos:
             Parameters:
             ------------
             
-            X_trend -       The time tensor specifying the time regressor
+            X_time -        The time tensor specifying the time regressor
 
             X_seasonality - The seasonality tensor specifying all cyclical regressors
 
             A -             The changepoint matrix defining, for each time stamp,
-                            which changepoints occured
+                            which changepoints occured. If the function is run in
+                            prediction mode (where y is None), this matrix may be
+                            recreated within the function. Since the recreation
+                            is non-deterministic, the matrix is provided for
+                            the cases where it won't have to be recreated.
 
             changepoints -  A tensor of timestamps, in days, of when each changepoint occurs
 
@@ -681,16 +833,24 @@ class Chronos:
         slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
 
         # define slope change values for each changepoint
-        deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
-                                                   torch.full((self.n_changepoints_, ), self.changepoint_prior_)).to_event(1))
+        past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
+                                                        torch.full((self.n_changepoints_, ), self.changepoint_prior_)).to_event(1))
 
-        # If the matrix specifies more changepoints than have been 
-        # observed we have to generate the additional changepoints
-        # for the prediction
-        deltas = self.add_future_changepoints(A, deltas)
+        # If no observations are given, we assume we are in
+        # prediction mode. Therefore, we have to generate possible scenarios
+        # for the future changepoints as a simulation
+
+        
+        if (y is None):
+            deltas, combined_changepoints, A = self.simulate_potential_future(X_time, past_deltas, changepoints, A)
+        else:
+            # If we are not in prediction mode, we only care about learning the past
+            deltas = past_deltas
+            combined_changepoints = changepoints
+        
         
         # Compute the trend
-        trend = self.compute_trend(X_trend, slope_init, intercept_init, A, deltas, changepoints)
+        trend = self.compute_trend(X_time, slope_init, intercept_init, A, deltas, combined_changepoints)
 
         # The seasonality is defined as a vector of coefficients
         # over the seasonality component
@@ -712,7 +872,7 @@ class Chronos:
         # Finally sample from the likelihood distribution and
         # optionally condition on the observed values. 
         # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_trend.size(0)):
+        with pyro.plate("data", X_time.size(0)):
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
             
         return mu
@@ -786,14 +946,14 @@ class Chronos:
 
 
         # Transform data into trend and seasonality as before
-        X_trend, X_seasonality, y = self.transform_data_(future_df)
+        X_time, X_seasonality, y = self.transform_data_(future_df)
 
         # Create future changepoint markers based on the proportion of changepoints
         # encoutered in the history
-        future_changepoint_number = self.changepoint_frequency * (X_trend.max() - self.max_train_time_days)
+        future_changepoint_number = self.changepoint_frequency * (X_time.max() - self.max_train_time_days)
         future_changepoint_number = round(future_changepoint_number.item())
 
-        future_changepoint_positions = self.find_changepoint_positions(X_trend, 
+        future_changepoint_positions = self.find_changepoint_positions(X_time, 
                                                                        future_changepoint_number, 
                                                                        1.0,
                                                                        min_value = self.max_train_time_days, 
@@ -806,7 +966,7 @@ class Chronos:
         combined_changepoints = torch.tensor(combined_changepoints)
         
         # Create changepoint matrix for all changepoints
-        A = self.make_A_matrix(X_trend, combined_changepoints)
+        A = self.make_A_matrix(X_time, self.changepoints)
 
 
         # For point estimates, use the predictive interface
@@ -818,7 +978,7 @@ class Chronos:
                                     return_sites=("obs", "trend")) 
 
             
-            samples = predictive(X_trend, X_seasonality, A, combined_changepoints)
+            samples = predictive(X_time, X_seasonality, A, self.changepoints)
             
             
             # Calculate ntiles based on the CI provided. Each side should have
