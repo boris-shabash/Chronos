@@ -62,7 +62,7 @@ class Chronos:
     '''
 
     history_color = "black"
-    prediction_color = "red"
+    prediction_color = "green"
     
     def __init__(self, 
                  method="MAP", 
@@ -73,6 +73,7 @@ class Chronos:
                  learning_rate=0.01,
                  changepoint_range = 0.8,
                  changepoint_prior = 0.05,
+                 distribution = "Normal",
                  max_iter=1000):
 
         '''
@@ -93,6 +94,11 @@ class Chronos:
 
 
         self.ms_to_day_ratio_ = (1e9*60*60*24)
+
+        if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
+            raise ValueError(f"Distribution {distribution} is not supported. Supported distribution names are: {chronos_utils.SUPPORTED_DISTRIBUTIONS}")
+        else:
+            self.distribution_ = distribution
         
         
     ######################################################################################################################## 
@@ -757,16 +763,24 @@ class Chronos:
                            torch.tensor(1.0), 
                            constraint = constraints.positive)
 
-        df = pyro.param("df", 
-                        torch.tensor(1.0), 
-                        constraint = constraints.positive)
+
+        if (self.distribution_ == chronos_utils.StudentT_dist_code):
+            df = pyro.param("df", 
+                            torch.tensor(1.0), 
+                            constraint = constraints.positive)
+         
+        
+        
          
         
         # Finally sample from the likelihood distribution and
         # optionally condition on the observed values. 
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", X_time.size(0)):
-            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            if (self.distribution_ == chronos_utils.StudentT_dist_code):
+                pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            elif (self.distribution_ == chronos_utils.Normal_dist_code):
+                pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             
         return mu
         
@@ -878,13 +892,17 @@ class Chronos:
         # standard deviation and the degrees of freedom for the
         # t-distribution
         sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
-        df = pyro.sample("df", dist.HalfCauchy(1.0))
+        if (self.distribution_ == chronos_utils.StudentT_dist_code):
+            df = pyro.sample("df", dist.HalfCauchy(1.0))
          
         # Finally sample from the likelihood distribution and
         # optionally condition on the observed values. 
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", X_time.size(0)):
-            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            if (self.distribution_ == chronos_utils.StudentT_dist_code):
+                pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            elif (self.distribution_ == chronos_utils.Normal_dist_code):
+                pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             
         return mu
     
@@ -1318,6 +1336,41 @@ class Chronos:
         
         return yearly_seasonality
     ########################################################################################################################
+    def plot_predictions(self, predictions, fig=None, gs_section=None):
+        '''
+            TODO: update
+        '''
+
+        single_figure = False
+        if (fig is None):
+            single_figure = True
+
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1,1, figure=fig)
+            gs_section = gs[0,0]
+
+        ax = fig.add_subplot(gs_section)
+
+        # plot credibility intervals
+        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
+
+        # plot true data points
+        ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
+
+        # plot predictions
+        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
+        
+        
+        # Set up plot
+        ax.set_xlim(predictions[self.time_col_].min(), predictions[self.time_col_].max())
+        ax.set_xlabel("Date", size=16)
+        ax.set_ylabel("Values", size=16)
+        ax.set_title('Predictions', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
+    ########################################################################################################################
     def plot_components(self, predictions, changepoint_threshold = 0.0, figure_name = None, figsize=(15,15)):
         '''
             A function to plot all components of the predictions into a matplotlib figure. 
@@ -1356,15 +1409,11 @@ class Chronos:
 
         
         fig = plt.figure(tight_layout=True, figsize=figsize)
-        gs = gridspec.GridSpec(plot_num, 4)
+        gs = gridspec.GridSpec(plot_num, 1)
 
         current_axs = 2
-        ax = fig.add_subplot(gs[:current_axs, : ])
-        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
-        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
-        ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
-        ax.set_xlabel("Date", size=16)
-        ax.set_ylabel("Values", size=16)
+        # Plot the predictions
+        self.plot_predictions(predictions, fig=fig, gs_section=gs[:current_axs, :])
 
 
         
@@ -1398,11 +1447,7 @@ class Chronos:
 
 
         # Finally, plot the residuals      
-        ax = fig.add_subplot(gs[current_axs, :])  
-        X = predictions[self.time_col_]
-        Y = predictions[self.target_col_]
-        Y_hat = predictions['yhat']
-        self.plot_residuals(X, Y, Y_hat, axs=ax)
+        self.plot_residuals(predictions, fig, gs[current_axs])
 
 
         # Adjust the spacing between the subplots so differnet text components 
@@ -1463,6 +1508,7 @@ class Chronos:
 
 
         axs.plot(x, trend, linewidth=3, c=self.prediction_color)
+        axs.set_xlim(x.min(), x.max())
 
         # Optionally draw uncertainty trend
         if (trend_upper is not None):
@@ -1484,6 +1530,8 @@ class Chronos:
         axs.axvline(datetime.date(predictions_start_date.year, 
                                     predictions_start_date.month, 
                                     predictions_start_date.day), c="black", linestyle="--")
+
+        
 
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Growth', size=18)
@@ -1617,8 +1665,9 @@ class Chronos:
             return fig
 
     ########################################################################################################################
-    def plot_residuals(self, x, y_true, y_pred, axs=None):
+    def plot_residuals(self, predictions, fig=None, gs_section=None):
         '''
+            TODO: update description
             A function which plots the residuals of the fit. An optional axis can be passed in
             for the drawing to take place on in case a subplot is used. If no matplotlib axis
             is passed in, the function draws the resulting figure and returns it
@@ -1643,18 +1692,33 @@ class Chronos:
             fig -       An optional return value. If no axis is passed in as an argument, a new
                         figure is created and returned upon drawing.
         '''
+
+        x = predictions[self.time_col_]
+        y_true = predictions[self.target_col_]
+        y_pred = predictions['yhat']
+
         y_residuals = y_true - y_pred
 
         single_figure = False
         # Make sure to build a new figure if we don't have one
-        if (axs is None):
+        if (fig is None):
             single_figure = True
-            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1, 1, figure=fig)
+            gs_section = gs[0]
         
+        internal_gs_1 = gridspec.GridSpecFromSubplotSpec(1, 8, subplot_spec=gs_section, wspace=0.0)
+        axs = fig.add_subplot(internal_gs_1[0, :-1])
+
         axs.scatter(x, y_residuals, c=self.prediction_color, s=4, alpha=0.2)
+        axs.set_xlim(x.min(), x.max())
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Residuals', size=18)
         axs.set_title('Residuals', size=18)
+
+        axs = fig.add_subplot(internal_gs_1[0, -1])
+        axs.hist(y_residuals, color=self.prediction_color, bins=50, orientation="horizontal", ec="black")
+        axs.tick_params(labelbottom=False, labelleft=False)
 
         if (single_figure):
             plt.show()
