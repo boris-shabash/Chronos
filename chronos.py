@@ -13,6 +13,7 @@ There should be a few specs for this method:
 import chronos_utils
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import numpy as np
 import math
 import datetime
@@ -60,8 +61,8 @@ class Chronos:
 
     '''
 
-    history_color = "blue"
-    prediction_color = "green"
+    history_color = "black"
+    prediction_color = "red"
     
     def __init__(self, 
                  method="MAP", 
@@ -1344,7 +1345,7 @@ class Chronos:
         '''
         
         # Count how many plots we will need
-        plot_num = 3
+        plot_num = 4 # 2 rows for predictions, 1 for trend, and 1 for residuals
         if self.weekly_seasonality_order_ > 0:
             plot_num += 1
         if self.month_seasonality_order_ > 0:
@@ -1354,49 +1355,54 @@ class Chronos:
 
 
         
-        # Create the corresponding subplot canvas
-        fig, axs = plt.subplots(plot_num, 1, figsize=figsize)
+        fig = plt.figure(tight_layout=True, figsize=figsize)
+        gs = gridspec.GridSpec(plot_num, 4)
+
+        current_axs = 2
+        ax = fig.add_subplot(gs[:current_axs, : ])
+        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
+        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
+        ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
+        ax.set_xlabel("Date", size=16)
+        ax.set_ylabel("Values", size=16)
 
 
-        # Start by plotting the results of the fitting process
-        current_axs = 0
-        axs[0].plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
-        axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
-        axs[0].scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
-        axs[0].set_xlabel("Date", size=16)
-        axs[0].set_ylabel("Values", size=16)
-        current_axs += 1
-
+        
         # Plot the trend
+        ax = fig.add_subplot(gs[current_axs, : ])
         self.plot_trend(x = predictions[self.time_col_], 
                         trend = predictions['trend'], 
                         changepoint_threshold = changepoint_threshold, 
                         trend_upper = predictions['trend_upper'], 
                         trend_lower = predictions['trend_lower'], 
-                        axs = axs[current_axs])
+                        axs = ax)
         
         current_axs += 1
 
 
         # Plot all seasonalities. Each into an individual subplot
         if (self.weekly_seasonality_order_ > 0):
-            self.plot_weekly_seasonality(axs=axs[current_axs])
+            ax = fig.add_subplot(gs[current_axs, : ])
+            self.plot_weekly_seasonality(axs=ax)
             current_axs += 1
 
         if (self.month_seasonality_order_ > 0):
-            self.plot_monthly_seasonality(axs[current_axs])
+            ax = fig.add_subplot(gs[current_axs, : ])
+            self.plot_monthly_seasonality(axs=ax)
             current_axs += 1
 
         if (self.year_seasonality_order_ > 0):
-            self.plot_yearly_seasonality(axs[current_axs])
+            ax = fig.add_subplot(gs[current_axs, : ])
+            self.plot_yearly_seasonality(axs=ax)
             current_axs += 1
 
 
-        # Finally, plot the residuals        
+        # Finally, plot the residuals      
+        ax = fig.add_subplot(gs[current_axs, :])  
         X = predictions[self.time_col_]
         Y = predictions[self.target_col_]
         Y_hat = predictions['yhat']
-        self.plot_residuals(X, Y, Y_hat, axs[current_axs])
+        self.plot_residuals(X, Y, Y_hat, axs=ax)
 
 
         # Adjust the spacing between the subplots so differnet text components 
@@ -1405,7 +1411,7 @@ class Chronos:
 
         # Optionally save the figure
         if (figure_name is not None):
-            plt.savefig(figure_name, dpi=96*4)
+            plt.savefig(figure_name, dpi=96*4)#'''
 
         
         plt.show()
