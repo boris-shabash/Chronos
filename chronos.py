@@ -59,6 +59,9 @@ class Chronos:
         max_iter -                  a
 
     '''
+
+    history_color = "blue"
+    prediction_color = "green"
     
     def __init__(self, 
                  method="MAP", 
@@ -1357,9 +1360,9 @@ class Chronos:
 
         # Start by plotting the results of the fitting process
         current_axs = 0
-        axs[0].plot(predictions[self.time_col_], predictions['yhat'], c="green", label="predictions")
-        axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color="green", alpha=0.3)
-        axs[0].scatter(predictions[self.time_col_], predictions[self.target_col_], c="black", label="observed")
+        axs[0].plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
+        axs[0].fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
+        axs[0].scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
         axs[0].set_xlabel("Date", size=16)
         axs[0].set_ylabel("Values", size=16)
         current_axs += 1
@@ -1453,11 +1456,11 @@ class Chronos:
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
 
-        axs.plot(x, trend, linewidth=3, c="green")
+        axs.plot(x, trend, linewidth=3, c=self.prediction_color)
 
         # Optionally draw uncertainty trend
         if (trend_upper is not None):
-            axs.fill_between(x, trend_upper, trend_lower, color="green", alpha=0.3)
+            axs.fill_between(x, trend_upper, trend_lower, color=self.prediction_color, alpha=0.3)
 
         # Optionally draw changepoints
         for index, changepoint in enumerate(self.changepoints):
@@ -1514,7 +1517,7 @@ class Chronos:
             single_figure = True
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
         
-        axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c="green")
+        axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c=self.prediction_color)
         axs.axhline(0.0, c="black", linestyle="--")
         axs.set_xticks(weekly_seasonality['X'].values)
         axs.set_xticklabels(weekly_seasonality['Label'].values)
@@ -1555,7 +1558,7 @@ class Chronos:
             single_figure = True
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
-        axs.plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c="green")
+        axs.plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c=self.prediction_color)
         axs.axhline(0.0, c="black", linestyle="--")
         axs.set_xticks(monthly_seasonality['X'].values[::9])
         axs.set_xticklabels(monthly_seasonality['Label'].values[::9])
@@ -1596,7 +1599,7 @@ class Chronos:
             single_figure = True
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
-        axs.plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c="green")
+        axs.plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c=self.prediction_color)
         axs.axhline(0.0, c="black", linestyle="--")
         axs.set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
         axs.set_xlabel('Day of Year', size=18)
@@ -1642,7 +1645,7 @@ class Chronos:
             single_figure = True
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
         
-        axs.scatter(x, y_residuals, c="green", s=4, alpha=0.2)
+        axs.scatter(x, y_residuals, c=self.prediction_color, s=4, alpha=0.2)
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Residuals', size=18)
         axs.set_title('Residuals', size=18)

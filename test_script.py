@@ -20,7 +20,7 @@ print(predictions)
 #assert(False)
 
 
-MAE = round(np.mean(np.abs(predictions['y'] - predictions['yhat'])), 2)
+'''MAE = round(np.mean(np.abs(predictions['y'] - predictions['yhat'])), 2)
 
 plt.figure(figsize=(15,5))
 plt.plot(predictions['ds'], predictions['yhat'], c="green")
