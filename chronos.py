@@ -63,6 +63,8 @@ class Chronos:
 
     history_color = "black"
     prediction_color = "green"
+    underperdiction_color = "darkgreen"
+    overprediction_color = "lightgreen"
     
     def __init__(self, 
                  method="MAP", 
@@ -688,6 +690,55 @@ class Chronos:
         return trend
 
     ########################################################################################################################
+    def compute_seasonality(self, X_time, slope_init, intercept_init, A, deltas, changepoints):
+        '''
+            A function which computes the trend component of the model. i.e. the growth
+            excluding any seasonalities
+
+
+            Parameters:
+            ------------
+            
+            X_time -            The time tensor specifying the time regressor
+
+            slope_init -        The intial slope, or growth ratem value
+
+            intercept_init -    The intial intercept, or constant, value
+
+            A -                 The changepoint matrix defining, for each time stamp,
+                                which changepoints occured
+
+            deltas -            A 1D tensor specifying the increase, or decrease, in slope
+                                at each changepoint. The size is (S, ) where S is the number
+                                of changepoints
+
+
+            changepoints -      A tensor of timestamps, in days, of when each changepoint occurs
+
+            
+            Returns:
+            ------------
+            trend -             A 1D tensor of the trend, or growth, excluding any seasonalities
+            
+        '''   
+
+
+        # To adjust the rates we also need to adjust the displacement during each rate change
+        intercept_adjustments = -deltas * changepoints
+
+        # There is a unique slope value and intercept value for each
+        # timepoint to create a piece-wise function
+        slope = slope_init + torch.matmul(A, deltas)
+        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
+
+
+        # Finally compute the trend component and record it in the global
+        # parameter store using the pyro.deterministic command
+        trend = slope * X_time + intercept
+        pyro.deterministic('trend', trend)
+
+        return trend
+    ########################################################################################################################
     
     def model_MLE_(self, X_time, X_seasonality, A, changepoints, y=None):  
         '''
@@ -860,6 +911,7 @@ class Chronos:
         # define slope change values for each changepoint
         past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
                                                         torch.full((self.n_changepoints_, ), self.changepoint_prior_)).to_event(1))
+
 
         # If no observations are given, we assume we are in
         # prediction mode. Therefore, we have to generate possible scenarios
@@ -1408,6 +1460,7 @@ class Chronos:
 
 
         
+        
         fig = plt.figure(tight_layout=True, figsize=figsize)
         gs = gridspec.GridSpec(plot_num, 1)
 
@@ -1446,7 +1499,7 @@ class Chronos:
             current_axs += 1
 
 
-        # Finally, plot the residuals      
+        # Finally, plot the residuals             
         self.plot_residuals(predictions, fig, gs[current_axs])
 
 
@@ -1514,11 +1567,14 @@ class Chronos:
         if (trend_upper is not None):
             axs.fill_between(x, trend_upper, trend_lower, color=self.prediction_color, alpha=0.3)
 
-        # Optionally draw changepoints
-        for index, changepoint in enumerate(self.changepoints):
+        # Optionally draw changepoint
+        changepoint_values = pyro.param(f'{self.param_prefix_}delta').detach().numpy()
+
+        for index, changepoint_value in enumerate(changepoint_values):
             
-            changepoint_value = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
-            changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_value)
+            changepoint_date = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
+            changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_date)
+            
 
             if (abs(changepoint_value) >= changepoint_threshold):
                 axs.axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
@@ -1707,6 +1763,10 @@ class Chronos:
             gs = gridspec.GridSpec(1, 1, figure=fig)
             gs_section = gs[0]
         
+        ax = fig.add_subplot(gs_section)
+        ax.set_title('Residuals', size=18)
+        ax.tick_params(labelbottom=False, labelleft=False)
+
         internal_gs_1 = gridspec.GridSpecFromSubplotSpec(1, 8, subplot_spec=gs_section, wspace=0.0)
         axs = fig.add_subplot(internal_gs_1[0, :-1])
 
@@ -1714,10 +1774,11 @@ class Chronos:
         axs.set_xlim(x.min(), x.max())
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Residuals', size=18)
-        axs.set_title('Residuals', size=18)
+        
 
         axs = fig.add_subplot(internal_gs_1[0, -1])
-        axs.hist(y_residuals, color=self.prediction_color, bins=50, orientation="horizontal", ec="black")
+        axs.hist(y_residuals[y_residuals <= 0.0], color=self.overprediction_color, bins=50, orientation="horizontal")#, ec="black")
+        axs.hist(y_residuals[y_residuals > 0.0], color=self.underperdiction_color, bins=50, orientation="horizontal")#, ec="black")
         axs.tick_params(labelbottom=False, labelleft=False)
 
         if (single_figure):

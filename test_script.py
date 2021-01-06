@@ -36,7 +36,7 @@ plt.show()#'''
 
 #assert(False)
 
-my_chronos.plot_components(predictions, figure_name="Complete_plot.png")
+my_chronos.plot_components(predictions, figure_name="Complete_plot.png", changepoint_threshold=0.0004)
 
 my_chronos.plot_predictions(predictions)
 #my_chronos.plot_trend(predictions['ds'], predictions['trend'])
