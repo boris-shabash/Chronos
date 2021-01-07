@@ -322,6 +322,12 @@ class Chronos:
         #internal_data = self.transform_data_(data)
         X_time, X_seasonality, y = self.transform_data_(data)
 
+
+        number_of_valid_changepoints = int(X_time.shape[0] * self.changepoint_range_)
+        if (number_of_valid_changepoints < self.n_changepoints_):
+            warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.n_changepoints_}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
+            self.n_changepoints_ = number_of_valid_changepoints
+
         # Compute the changepoint frequency
         self.changepoint_frequency = self.n_changepoints_/(X_time.max() - X_time.min())
         self.max_train_time_days = X_time.max().item()
@@ -1387,41 +1393,7 @@ class Chronos:
                                            "Y": seasonality})
         
         return yearly_seasonality
-    ########################################################################################################################
-    def plot_predictions(self, predictions, fig=None, gs_section=None):
-        '''
-            TODO: update
-        '''
-
-        single_figure = False
-        if (fig is None):
-            single_figure = True
-
-            fig = plt.figure(figsize=(15,5))
-            gs = gridspec.GridSpec(1,1, figure=fig)
-            gs_section = gs[0,0]
-
-        ax = fig.add_subplot(gs_section)
-
-        # plot credibility intervals
-        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
-
-        # plot true data points
-        ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
-
-        # plot predictions
-        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
-        
-        
-        # Set up plot
-        ax.set_xlim(predictions[self.time_col_].min(), predictions[self.time_col_].max())
-        ax.set_xlabel("Date", size=16)
-        ax.set_ylabel("Values", size=16)
-        ax.set_title('Predictions', size=18)
-
-        if (single_figure):
-            plt.show()
-            return fig
+    
     ########################################################################################################################
     def plot_components(self, predictions, changepoint_threshold = 0.0, figure_name = None, figsize=(15,15)):
         '''
@@ -1515,6 +1487,42 @@ class Chronos:
         plt.show()
 
         return fig
+    ########################################################################################################################
+    def plot_predictions(self, predictions, fig=None, gs_section=None):
+        '''
+            TODO: update
+        '''
+
+        single_figure = False
+        if (fig is None):
+            single_figure = True
+
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1,1, figure=fig)
+            gs_section = gs[0,0]
+
+        ax = fig.add_subplot(gs_section)
+
+        # plot credibility intervals
+        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
+
+        # plot true data points, but only if there is at least one non-nan value
+        if (predictions[self.target_col_].isna().sum() < predictions.shape[0]):
+            ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
+
+        # plot predictions
+        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
+        
+        
+        # Set up plot
+        ax.set_xlim(predictions[self.time_col_].min(), predictions[self.time_col_].max())
+        ax.set_xlabel("Date", size=16)
+        ax.set_ylabel("Values", size=16)
+        ax.set_title('Predictions', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
     ########################################################################################################################
     def plot_trend(self, x, trend, changepoint_threshold=0.0, trend_upper=None, trend_lower=None, predictions_start_date = None, axs=None):
         '''
