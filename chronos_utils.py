@@ -11,3 +11,6 @@ weekday_names_ = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 Normal_dist_code = "Normal"
 StudentT_dist_code = "StudentT"
 SUPPORTED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code]
+
+
+SUPPORTED_METHODS = ["MAP", "MLE"]
