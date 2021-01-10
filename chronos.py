@@ -753,15 +753,16 @@ class Chronos:
         # parameter store using the pyro.deterministic command
         trend = slope * X_time + intercept
 
-        if (self.distribution_ == chronos_utils.Gamma_dist_code):
-            trend = torch.nn.functional.softplus(trend, beta=100)
-        pyro.deterministic('trend', trend)
+        #if (self.distribution_ == chronos_utils.Gamma_dist_code):
+        #    trend = torch.nn.functional.softplus(trend, beta=100)
+        #pyro.deterministic('trend', trend)
 
         return trend
 
     ########################################################################################################################
-    def compute_seasonality(self, X_time, slope_init, intercept_init, A, deltas, changepoints):
+    def compute_seasonality(self, seasonality):
         '''
+            TODO: update
             A function which computes the trend component of the model. i.e. the growth
             excluding any seasonalities
 
@@ -769,21 +770,7 @@ class Chronos:
             Parameters:
             ------------
             
-            X_time -            The time tensor specifying the time regressor
-
-            slope_init -        The intial slope, or growth ratem value
-
-            intercept_init -    The intial intercept, or constant, value
-
-            A -                 The changepoint matrix defining, for each time stamp,
-                                which changepoints occured
-
-            deltas -            A 1D tensor specifying the increase, or decrease, in slope
-                                at each changepoint. The size is (S, ) where S is the number
-                                of changepoints
-
-
-            changepoints -      A tensor of timestamps, in days, of when each changepoint occurs
+            
 
             
             Returns:
@@ -792,22 +779,11 @@ class Chronos:
             
         '''   
 
+        if (self.seasonality_mode_ == "mul"):
+            seasonality = 1 + seasonality
+        
 
-        # To adjust the rates we also need to adjust the displacement during each rate change
-        intercept_adjustments = -deltas * changepoints
-
-        # There is a unique slope value and intercept value for each
-        # timepoint to create a piece-wise function
-        slope = slope_init + torch.matmul(A, deltas)
-        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
-
-
-        # Finally compute the trend component and record it in the global
-        # parameter store using the pyro.deterministic command
-        trend = slope * X_time + intercept
-        pyro.deterministic('trend', trend)
-
-        return trend
+        return seasonality
     ########################################################################################################################
     
     def model_MLE_(self, X_time, X_seasonality, A, changepoints, y=None):  
@@ -869,6 +845,19 @@ class Chronos:
         betas = pyro.param(f"betas", torch.rand(X_seasonality.size(1)))
         seasonality = X_seasonality.matmul(betas)
         
+        seasonality = self.compute_seasonality(seasonality)
+
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            return self.predict_normal_likelihood_("MLE", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            return self.predict_studentT_likelihood_("MLE", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            return self.predict_gamma_likelihood_("MLE", trend, seasonality, y)
+
+
+        '''
+
         # Finally create a linear combination for the data
         if (self.seasonality_mode_ == "add"):
             linear_combo = trend + seasonality
@@ -886,7 +875,7 @@ class Chronos:
             self.predict_gamma_likelihood_("MLE", mu, y)
 
             
-        return mu
+        return mu#'''
         
         
     ########################################################################################################################
@@ -922,10 +911,19 @@ class Chronos:
     
     
     ########################################################################################################################
-    def predict_normal_likelihood_(self, method, mu, y):
+    def predict_normal_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
         '''
+
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
         
         # Define additional paramters specifying the likelihood
         # distribution. 
@@ -942,12 +940,23 @@ class Chronos:
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+
+        return mu
     ########################################################################################################################
-    def predict_studentT_likelihood_(self, method, mu, y):
+    def predict_studentT_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
         '''
         
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
+
         # Define additional paramters specifying the likelihood
         # distribution. 
         if (method == "MAP"):
@@ -966,12 +975,24 @@ class Chronos:
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+
+        return mu
     ########################################################################################################################
-    def predict_gamma_likelihood_(self, method, mu, y):
+    def predict_gamma_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
         '''
-        
+        trend = torch.nn.functional.softplus(trend, beta=100)
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
+
+
         # Define additional paramters specifying the likelihood
         # distribution. 
         if (method == "MAP"):
@@ -995,6 +1016,8 @@ class Chronos:
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.Gamma(concentration=shape, rate=rate), obs=y)
+
+        return mu
         
     ########################################################################################################################    
     def model_MAP_(self, X_time, X_seasonality, A, changepoints, y=None):
@@ -1061,8 +1084,18 @@ class Chronos:
         betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X_seasonality.size(1)), 
                                                   torch.full((X_seasonality.size(1),), 10.0)).to_event(1))
         seasonality = X_seasonality.matmul(betas)
+
+        seasonality = self.compute_seasonality(seasonality)
+
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            return self.predict_normal_likelihood_("MAP", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            return self.predict_studentT_likelihood_("MAP", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            return self.predict_gamma_likelihood_("MAP", trend, seasonality, y)
         
-        # Finally create a linear combination for the data
+        '''# Finally create a linear combination for the data
         if (self.seasonality_mode_ == "add"):
             linear_combo = trend + seasonality
         elif (self.seasonality_mode_ == "mul"):
@@ -1078,7 +1111,7 @@ class Chronos:
             self.predict_gamma_likelihood_("MAP", mu, y)
         
             
-        return mu
+        return mu#'''
     
     
     ########################################################################################################################
