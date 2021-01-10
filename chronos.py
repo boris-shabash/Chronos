@@ -983,6 +983,7 @@ class Chronos:
             TODO: update
         '''
         trend = torch.nn.functional.softplus(trend, beta=100)
+        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
         pyro.deterministic('trend', trend)
 
         if (self.seasonality_mode_ == "add"):
@@ -990,7 +991,7 @@ class Chronos:
         elif (self.seasonality_mode_ == "mul"):
             linear_combo = trend * seasonality 
 
-        mu = linear_combo
+        mu = linear_combo + torch.finfo(torch.float32).eps
 
 
         # Define additional paramters specifying the likelihood
@@ -1004,10 +1005,11 @@ class Chronos:
                               constraint = constraints.positive)
 
                 
-        if (mu.min() <= 0.0):
+        mu_positive = mu
+        '''if (mu.min() <= 0.0):
             mu_positive = mu - mu.min() + torch.finfo(torch.float32).eps
         else:
-            mu_positive = mu
+            mu_positive = mu#'''
 
         shape = rate * mu_positive
          
