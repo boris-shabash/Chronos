@@ -14,6 +14,9 @@ import chronos_utils
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.ticker as mtick
+
+
 import numpy as np
 import math
 import datetime
@@ -62,10 +65,10 @@ class Chronos:
     '''
 
     history_color = "black"
-    prediction_color = (0.0, 1.0, 0.0)
-    uncertainty_color = (0.0, 153/255, 0.0)
-    underperdiction_color = (0.0, 204/255, 0.0)
-    overprediction_color = (102/255, 1.0, 102/255)
+    prediction_color = "blue"#(0.0, 1.0, 0.0)
+    uncertainty_color = "blue"#, (0.0, 204/255, 102/255)
+    underperdiction_color = "darkblue"#(0.0, 204/255, 0.0)
+    overprediction_color = "lightblue"#(102/255, 1.0, 102/255)
     
     def __init__(self, 
                  method="MAP", 
@@ -749,6 +752,9 @@ class Chronos:
         # Finally compute the trend component and record it in the global
         # parameter store using the pyro.deterministic command
         trend = slope * X_time + intercept
+
+        if (self.distribution_ == chronos_utils.Gamma_dist_code):
+            trend = torch.nn.functional.softplus(trend, beta=100)
         pyro.deterministic('trend', trend)
 
         return trend
@@ -867,36 +873,18 @@ class Chronos:
         if (self.seasonality_mode_ == "add"):
             linear_combo = trend + seasonality
         elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * (seasonality+1)
+            linear_combo = trend * (1+seasonality)
         mu = linear_combo
 
-            
-        # Define additional paramters specifying the likelihood
-        # distribution. In the default cause, it is the
-        # standard deviation and the degrees of freedom for the
-        # t-distribution
-        sigma = pyro.param("sigma", 
-                           torch.tensor(1.0), 
-                           constraint = constraints.positive)
+        
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            self.predict_normal_likelihood_("MLE", mu, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            self.predict_studentT_likelihood_("MLE", mu, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            self.predict_gamma_likelihood_("MLE", mu, y)
 
-
-        if (self.distribution_ == chronos_utils.StudentT_dist_code):
-            df = pyro.param("df", 
-                            torch.tensor(1.0), 
-                            constraint = constraints.positive)
-         
-        
-        
-         
-        
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_time.size(0)):
-            if (self.distribution_ == chronos_utils.StudentT_dist_code):
-                pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
-            elif (self.distribution_ == chronos_utils.Normal_dist_code):
-                pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             
         return mu
         
@@ -934,6 +922,80 @@ class Chronos:
     
     
     ########################################################################################################################
+    def predict_normal_likelihood_(self, method, mu, y):
+        '''
+            TODO: update
+        '''
+        
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            sigma = pyro.param("sigma", 
+                           torch.tensor(1.0), 
+                           constraint = constraints.positive)
+        
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+    ########################################################################################################################
+    def predict_studentT_likelihood_(self, method, mu, y):
+        '''
+            TODO: update
+        '''
+        
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+            df = pyro.sample("df", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            sigma = pyro.param("sigma", 
+                           torch.tensor(1.0), 
+                           constraint = constraints.positive)
+            df = pyro.param("df", 
+                            torch.tensor(1.0), 
+                            constraint = constraints.positive)
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+    ########################################################################################################################
+    def predict_gamma_likelihood_(self, method, mu, y):
+        '''
+            TODO: update
+        '''
+        
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
+            #shape = pyro.sample("shape", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
+        elif (method == "MLE"):
+            rate = pyro.param("rate", 
+                              torch.tensor(1.0), 
+                              constraint = constraints.positive)
+
+                
+        if (mu.min() <= 0.0):
+            mu_positive = mu - mu.min() + torch.finfo(torch.float32).eps
+        else:
+            mu_positive = mu
+
+        shape = rate * mu_positive
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Gamma(concentration=shape, rate=rate), obs=y)
+        
     ########################################################################################################################    
     def model_MAP_(self, X_time, X_seasonality, A, changepoints, y=None):
         '''
@@ -1004,25 +1066,17 @@ class Chronos:
         if (self.seasonality_mode_ == "add"):
             linear_combo = trend + seasonality
         elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * (seasonality+1)
+            linear_combo = trend * (1+seasonality)
         mu = linear_combo
+
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            self.predict_normal_likelihood_("MAP", mu, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            self.predict_studentT_likelihood_("MAP", mu, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            self.predict_gamma_likelihood_("MAP", mu, y)
         
-        # Define additional paramters specifying the likelihood
-        # distribution. In the default cause, it is the
-        # standard deviation and the degrees of freedom for the
-        # t-distribution
-        sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
-        if (self.distribution_ == chronos_utils.StudentT_dist_code):
-            df = pyro.sample("df", dist.HalfCauchy(1.0))
-         
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_time.size(0)):
-            if (self.distribution_ == chronos_utils.StudentT_dist_code):
-                pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
-            elif (self.distribution_ == chronos_utils.Normal_dist_code):
-                pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
             
         return mu
     
@@ -1748,6 +1802,7 @@ class Chronos:
             axs.axhline(0.0, c="black", linestyle="--")
         else:
             axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xticks(weekly_seasonality['X'].values)
         axs.set_xticklabels(weekly_seasonality['Label'].values)
         axs.set_xlim(-0.1, weekly_seasonality['X'].max()+0.1)
@@ -1798,6 +1853,7 @@ class Chronos:
             axs.axhline(0.0, c="black", linestyle="--")
         else:
             axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xticks(monthly_seasonality['X'].values[::9])
         axs.set_xticklabels(monthly_seasonality['Label'].values[::9])
         axs.set_xlim(-0.2, 30.2)
@@ -1848,6 +1904,7 @@ class Chronos:
             axs.axhline(0.0, c="black", linestyle="--")
         else:
             axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
         axs.set_xlabel('Day of Year', size=18)
         axs.set_ylabel('Seasonality', size=18)
@@ -1902,6 +1959,10 @@ class Chronos:
         
         ax = fig.add_subplot(gs_section)
         ax.set_title('Residuals', size=18)
+        #ax.set_xticks([], minor=True)
+        #ax.set_yticks([], minor=True)
+        ax.xaxis.set_ticks_position('none') 
+        ax.yaxis.set_ticks_position('none') 
         ax.tick_params(labelbottom=False, labelleft=False)
 
         internal_gs_1 = gridspec.GridSpecFromSubplotSpec(1, 8, subplot_spec=gs_section, wspace=0.0)
@@ -1916,6 +1977,8 @@ class Chronos:
         axs = fig.add_subplot(internal_gs_1[0, -1])
         axs.hist(y_residuals[y_residuals <= 0.0], color=self.overprediction_color, bins=50, orientation="horizontal")#, ec="black")
         axs.hist(y_residuals[y_residuals > 0.0], color=self.underperdiction_color, bins=50, orientation="horizontal")#, ec="black")
+        axs.xaxis.set_ticks_position('none') 
+        axs.yaxis.set_ticks_position('none') 
         axs.tick_params(labelbottom=False, labelleft=False)
 
         if (single_figure):
