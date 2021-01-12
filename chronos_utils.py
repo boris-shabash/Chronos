@@ -6,3 +6,15 @@ monthday_names_.append("31st")
 
 
 weekday_names_ = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+Normal_dist_code = "Normal"
+StudentT_dist_code = "StudentT"
+LogNormal_dist_code = "LogNormal"
+Gamma_dist_code = "Gamma"
+Poisson_dist_code = "Poisson"
+HalfNormal_dist_code = "HalfNormal"
+SUPPORTED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code, Gamma_dist_code, Poisson_dist_code, HalfNormal_dist_code]
+
+
+SUPPORTED_METHODS = ["MAP", "MLE"]

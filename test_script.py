@@ -10,17 +10,19 @@ my_ts_data['ds'] = pd.to_datetime(my_ts_data['ds'])
 
 
 
-my_chronos = Chronos(method="MAP", max_iter=100, learning_rate=10.0, n_changepoints=25)
+my_chronos = Chronos(method="MAP", max_iter=100, 
+                     learning_rate=10.0, 
+                     n_changepoints=25)
 
 my_chronos.fit(my_ts_data)
 #future_df = my_chronos.make_future_dataframe(period=365)
 
-predictions = my_chronos.predict(sample_number=1000, period=365, include_history=True)
+predictions = my_chronos.predict(sample_number=1000, period=365, include_history=False)
 print(predictions)
 #assert(False)
 
 
-'''MAE = round(np.mean(np.abs(predictions['y'] - predictions['yhat'])), 2)
+MAE = round(np.mean(np.abs(predictions['y'] - predictions['yhat'])), 2)
 
 plt.figure(figsize=(15,5))
 plt.plot(predictions['ds'], predictions['yhat'], c="green")
@@ -34,10 +36,11 @@ plt.show()#'''
 
 #assert(False)
 
-my_chronos.plot_components(predictions, figure_name="Complete_plot.png")
+#my_chronos.plot_components(predictions, figure_name="Complete_plot.png", changepoint_threshold=0.0004)
 
-my_chronos.plot_trend(predictions['ds'], predictions['trend'])
-my_chronos.plot_weekly_seasonality()
-my_chronos.plot_monthly_seasonality()
-my_chronos.plot_yearly_seasonality()
-my_chronos.plot_residuals(predictions['ds'], predictions['y'], predictions['yhat'])
+my_chronos.plot_predictions(predictions)
+#my_chronos.plot_trend(predictions['ds'], predictions['trend'])
+#my_chronos.plot_weekly_seasonality()
+#my_chronos.plot_monthly_seasonality()
+#my_chronos.plot_yearly_seasonality()
+my_chronos.plot_residuals(predictions)#'''

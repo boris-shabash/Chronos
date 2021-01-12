@@ -14,6 +14,9 @@ import chronos_utils
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.ticker as mtick
+
+
 import numpy as np
 import math
 import datetime
@@ -62,7 +65,10 @@ class Chronos:
     '''
 
     history_color = "black"
-    prediction_color = "red"
+    prediction_color = "blue"#(0.0, 1.0, 0.0)
+    uncertainty_color = "blue"#, (0.0, 204/255, 102/255)
+    underperdiction_color = "darkblue"#(0.0, 204/255, 0.0)
+    overprediction_color = "lightblue"#(102/255, 1.0, 102/255)
     
     def __init__(self, 
                  method="MAP", 
@@ -73,14 +79,27 @@ class Chronos:
                  learning_rate=0.01,
                  changepoint_range = 0.8,
                  changepoint_prior = 0.05,
+                 distribution = "Normal",
+                 seasonality_mode = "add",
                  max_iter=1000):
 
         '''
             The initialization function. See class docstring for an in-depth explanation of all parameters
         '''
         
-        self.method_ = method
-        self.n_iter_ = max_iter
+        if (method not in chronos_utils.SUPPORTED_METHODS):
+            raise ValueError(f"Method {method} is not supported. The only supported methods are {chronos_utils.SUPPORTED_METHODS}")
+        else:
+            self.method_ = method
+
+        if (not isinstance(max_iter, int)):
+            raise TypeError(f"max_iter must be a positive integer")
+        elif (max_iter <= 0):
+            raise ValueError(f"max_iter must be a positive integer")
+        else:
+            self.n_iter_ = max_iter
+
+
         self.lr_ = learning_rate
         self.n_changepoints_ = n_changepoints
         self.changepoint_range_  = changepoint_range
@@ -91,8 +110,18 @@ class Chronos:
         self.weekly_seasonality_order_ = weekly_seasonality_order
         self.month_seasonality_order_ = month_seasonality_order
 
+        self.seasonality_mode_ = seasonality_mode
 
         self.ms_to_day_ratio_ = (1e9*60*60*24)
+
+        self.y_max = None
+        self.history_min_time = None
+        self.history_max_value = None
+
+        if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
+            raise ValueError(f"Distribution {distribution} is not supported. Supported distribution names are: {chronos_utils.SUPPORTED_DISTRIBUTIONS}")
+        else:
+            self.distribution_ = distribution
         
         
     ######################################################################################################################## 
@@ -132,9 +161,21 @@ class Chronos:
         internal_data['weekday'] = internal_data[self.time_col_].dt.dayofweek
         internal_data['monthday'] = internal_data[self.time_col_].dt.day - 1      # make days start at 0
         internal_data['yearday'] = internal_data[self.time_col_].dt.dayofyear - 1 # make days start at 0
+
         
         # Convert ms values to days
         internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/self.ms_to_day_ratio_
+        
+        if (self.history_min_time is None):
+            self.history_min_time = internal_data[self.time_col_].min()
+            #self.history_min_time = 0.0
+        
+        internal_data[self.time_col_] = internal_data[self.time_col_] - self.history_min_time
+
+        if (self.history_max_value is None):
+            self.history_max_value = internal_data[self.time_col_].max()
+            #self.history_max_value = 1.0
+        internal_data[self.time_col_] = internal_data[self.time_col_]/self.history_max_value#'''
         
         
         # Keep track of the seasonal columns' names
@@ -160,8 +201,12 @@ class Chronos:
         
         # Weekly seasonality
         for i in range(1, self.weekly_seasonality_order_+1):
-            cycle_position = i*2*math.pi*internal_data['weekday']/7 # max value will be 6 since values
-                                                                    # will go from 0 to 6
+            if (self.trained_on_weekend_ == True):
+                cycle_position = i*2*math.pi*internal_data['weekday']/7 # max value will be 6 since values
+                                                                        # will go from 0 to 6
+            else:
+                cycle_position = i*2*math.pi*internal_data['weekday']/5 # max value will be 4 since values
+                                                                        # will go from 0 to 4
             internal_data[f"weekly_sin_{i}"] = np.sin(cycle_position) 
             internal_data[f"weekly_cos_{i}"] = np.cos(cycle_position) 
             self.seasonality_cols_.extend([f"weekly_sin_{i}", f"weekly_cos_{i}"])
@@ -177,7 +222,16 @@ class Chronos:
 
         # If we don't have a target column (i.e. we're predicting), don't try and grab it
         if (self.target_col_ in internal_data.columns):
-            y = torch.tensor(internal_data[self.target_col_].values, dtype=torch.float32)
+            if (self.distribution_ not in [chronos_utils.Poisson_dist_code]):
+                if (self.y_max is None):
+                    self.y_max = internal_data[self.target_col_].max()
+
+                
+                y_values = internal_data[self.target_col_].values/self.y_max
+            else:
+                y_values = internal_data[self.target_col_].values
+            
+            y = torch.tensor(y_values, dtype=torch.float32)
         else:
             y = None
         
@@ -232,11 +286,11 @@ class Chronos:
         # However, when predicting the future, it is very much possible our first
         # prediction day is a changepoint
         if (drop_first):
-            changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num+1, dtype=np.float32))
+            changepoints =  np.linspace(min_value, max_value, changepoint_num+1, dtype=np.float32)
             changepoints = changepoints[1:] # The first entry will always be 0, but we don't
                                             # want a changepoint right in the beginning
         else:
-            changepoints =  np.round(np.linspace(min_value, max_value, changepoint_num, dtype=np.float32))
+            changepoints =  np.linspace(min_value, max_value, changepoint_num, dtype=np.float32)
 
 
         changepoints = torch.tensor(changepoints, dtype=torch.float32)
@@ -309,13 +363,24 @@ class Chronos:
         
         # Make a copy of the history
         self.history = data.copy()
+        if (self.history[self.time_col_].dt.day_name().isin(["Sunday", "Saturday"]).any() == False):
+            self.trained_on_weekend_ = False
+        else:
+            self.trained_on_weekend_ = True
+
         
         # Transform the data by adding seasonality
         #internal_data = self.transform_data_(data)
         X_time, X_seasonality, y = self.transform_data_(data)
 
+
+        number_of_valid_changepoints = int(X_time.shape[0] * self.changepoint_range_)
+        if (number_of_valid_changepoints < self.n_changepoints_):
+            warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.n_changepoints_}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
+            self.n_changepoints_ = number_of_valid_changepoints
+
         # Compute the changepoint frequency
-        self.changepoint_frequency = self.n_changepoints_/(X_time.max() - X_time.min())
+        self.changepoint_frequency = self.n_changepoints_/((X_time.max() - X_time.min()) * self.history_max_value)
         self.max_train_time_days = X_time.max().item()
         
         
@@ -340,14 +405,14 @@ class Chronos:
                 self.param_prefix_  = "AutoDelta."
                 
             # This raises a trace warning so we turn that off. 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self.train_point_estimate(self.model, 
-                                          self.guide,
-                                          X_time,
-                                          X_seasonality,
-                                          A,
-                                          y)
+            '''with warnings.catch_warnings():
+                warnings.simplefilter("ignore")'''
+            self.train_point_estimate(self.model, 
+                                        self.guide,
+                                        X_time,
+                                        X_seasonality,
+                                        A,
+                                        y)
         elif (self.method == "MCMC"):
             print("Employing Markov Chain Monte Carlo")
             raise NotImplementedError("Did not implement MCMC methods")
@@ -604,7 +669,14 @@ class Chronos:
             
         '''  
         # Simulate potential changepoint generation
-        future_trend_point_number = int(X_time.max() - self.max_train_time_days)
+        
+
+        future_raw_value = X_time.max() - self.max_train_time_days
+        future_days_number = int(future_raw_value * self.history_max_value) 
+        
+
+        
+        future_trend_point_number = future_days_number
         deltas = self.add_future_changepoints(past_deltas, future_trend_point_number)
 
         # Count the number of future changepoints simulated
@@ -615,13 +687,19 @@ class Chronos:
         # matrix to be used to correct the trend.
         # Otherwise, we can continue as usual
         if (future_changepoint_number > 0):
-            first_future_trend_value = int(X_time[-future_trend_point_number].item())
-            last_future_trend_value = int(X_time[-1].item())
+
+            # The values start at 1.0, and torch doesn't have a random number generator
+            # for random floats, only the values from 0.0 - 1.0, so need to do some magic
+            first_future_trend_value = X_time[-future_trend_point_number].item()
+            last_future_trend_value = X_time[-1].item()
 
             
-            future_changepoints = torch.randint(low = first_future_trend_value, 
-                                                high = last_future_trend_value, 
-                                                size = (future_changepoint_number, )).type(torch.float32)
+            # Make some random values
+            random_values = torch.rand(size = (future_changepoint_number, )).type(torch.float32)
+            
+            # Employ inverse scaling to get the values from 0.0 - 1.0 to first_future_trend_value - last_future_trend_value
+            future_changepoints = random_values * (last_future_trend_value - first_future_trend_value) + first_future_trend_value
+            
             
             combined_changepoints = torch.cat([past_changepoints, future_changepoints])
 
@@ -677,10 +755,38 @@ class Chronos:
         # Finally compute the trend component and record it in the global
         # parameter store using the pyro.deterministic command
         trend = slope * X_time + intercept
-        pyro.deterministic('trend', trend)
+
+        #if (self.distribution_ == chronos_utils.Gamma_dist_code):
+        #    trend = torch.nn.functional.softplus(trend, beta=100)
+        #pyro.deterministic('trend', trend)
 
         return trend
 
+    ########################################################################################################################
+    def compute_seasonality(self, seasonality):
+        '''
+            TODO: update
+            A function which computes the trend component of the model. i.e. the growth
+            excluding any seasonalities
+
+
+            Parameters:
+            ------------
+            
+            
+
+            
+            Returns:
+            ------------
+            trend -             A 1D tensor of the trend, or growth, excluding any seasonalities
+            
+        '''   
+
+        if (self.seasonality_mode_ == "mul"):
+            seasonality = 1 + seasonality
+        
+
+        return seasonality
     ########################################################################################################################
     
     def model_MLE_(self, X_time, X_seasonality, A, changepoints, y=None):  
@@ -720,13 +826,12 @@ class Chronos:
 
         # define slope change values for each changepoint
         past_deltas = pyro.param("delta", torch.zeros(self.n_changepoints_))
+        
 
 
         # If no observations are given, we assume we are in
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
-
-        
         if (y is None):
             deltas, combined_changepoints, A = self.simulate_potential_future(X_time, past_deltas, changepoints, A)
         else:
@@ -743,32 +848,41 @@ class Chronos:
         betas = pyro.param(f"betas", torch.rand(X_seasonality.size(1)))
         seasonality = X_seasonality.matmul(betas)
         
+        seasonality = self.compute_seasonality(seasonality)
+
+        # Sample observations based on the appropriate distribution
+        return self.predict_likelihood("MLE", self.distribution_, trend, seasonality, y)
+
+        '''if (self.distribution_ == chronos_utils.Normal_dist_code):
+            return self.predict_normal_likelihood_("MLE", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            return self.predict_studentT_likelihood_("MLE", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            return self.predict_gamma_likelihood_("MLE", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Poisson_dist_code):
+            return self.predict_poisson_likelihood_("MLE", trend, seasonality, y)#'''
+
+
+        '''
+
         # Finally create a linear combination for the data
-        linear_combo = trend + seasonality
-        #print(linear_combo)
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * (1+seasonality)
         mu = linear_combo
 
-            
-        # Define additional paramters specifying the likelihood
-        # distribution. In the default cause, it is the
-        # standard deviation and the degrees of freedom for the
-        # t-distribution
-        sigma = pyro.param("sigma", 
-                           torch.tensor(1.0), 
-                           constraint = constraints.positive)
-
-        df = pyro.param("df", 
-                        torch.tensor(1.0), 
-                        constraint = constraints.positive)
-         
         
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_time.size(0)):
-            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            self.predict_normal_likelihood_("MLE", mu, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            self.predict_studentT_likelihood_("MLE", mu, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            self.predict_gamma_likelihood_("MLE", mu, y)
+
             
-        return mu
+        return mu#'''
         
         
     ########################################################################################################################
@@ -804,6 +918,191 @@ class Chronos:
     
     
     ########################################################################################################################
+    def predict_normal_likelihood_(self, method, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
+        
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            sigma = pyro.param("sigma", 
+                           torch.tensor(1.0), 
+                           constraint = constraints.positive)
+        
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+
+        return mu
+    ########################################################################################################################
+    def predict_halfnormal_likelihood_(self, method, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+        trend = torch.nn.functional.softplus(trend, beta=100)
+        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
+        # since mu = sigma * root(2)/root(pi)
+        # sigma = mu * root(pi)/root(2)
+
+        sigma = mu * ((np.pi/2)**0.5) + torch.finfo(torch.float32).eps
+        
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.HalfNormal(sigma), obs=y)
+
+        return mu
+    ########################################################################################################################
+    def predict_studentT_likelihood_(self, method, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+        
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo
+
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+            df = pyro.sample("df", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            sigma = pyro.param("sigma", 
+                           torch.tensor(1.0), 
+                           constraint = constraints.positive)
+            df = pyro.param("df", 
+                            torch.tensor(1.0), 
+                            constraint = constraints.positive)
+         
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+
+        return mu
+    ########################################################################################################################
+    def predict_gamma_likelihood_(self, method, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+        trend = torch.nn.functional.softplus(trend, beta=100)
+        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo + torch.finfo(torch.float32).eps
+
+
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method == "MAP"):
+            rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
+            #shape = pyro.sample("shape", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
+        elif (method == "MLE"):
+            rate = pyro.param("rate", 
+                              torch.tensor(1.0), 
+                              constraint = constraints.positive)
+
+                
+        mu_positive = mu
+        '''if (mu.min() <= 0.0):
+            mu_positive = mu - mu.min() + torch.finfo(torch.float32).eps
+        else:
+            mu_positive = mu#'''
+
+        shape = rate * mu_positive
+         
+        if (y is not None):
+            y_obs = y + torch.finfo(torch.float32).eps
+        else:
+            y_obs = y
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Gamma(concentration=shape, rate=rate), obs=y_obs)
+
+        return mu
+    ########################################################################################################################
+    def predict_poisson_likelihood_(self, method, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+        trend = torch.nn.functional.softplus(trend, beta=100)
+        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+        pyro.deterministic('trend', trend)
+
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * seasonality 
+
+        mu = linear_combo + torch.finfo(torch.float32).eps
+
+
+        rate = mu
+         
+        
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Poisson(rate=rate), obs=y)
+
+        return mu
+    ########################################################################################################################    
+    def predict_likelihood(self, method, distribution, trend, seasonality, y):
+        '''
+            TODO: update
+        '''
+        if (distribution == chronos_utils.Normal_dist_code):
+            return self.predict_normal_likelihood_(method, trend, seasonality, y)
+        elif (distribution == chronos_utils.StudentT_dist_code):
+            return self.predict_studentT_likelihood_(method, trend, seasonality, y)
+        elif (distribution == chronos_utils.Gamma_dist_code):
+            return self.predict_gamma_likelihood_(method, trend, seasonality, y)
+        elif (distribution == chronos_utils.Poisson_dist_code):
+            return self.predict_poisson_likelihood_(method, trend, seasonality, y)
+        elif (distribution == chronos_utils.HalfNormal_dist_code):
+            return self.predict_halfnormal_likelihood_(method, trend, seasonality, y)
+        
     ########################################################################################################################    
     def model_MAP_(self, X_time, X_seasonality, A, changepoints, y=None):
         '''
@@ -847,6 +1146,7 @@ class Chronos:
         past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.n_changepoints_), 
                                                         torch.full((self.n_changepoints_, ), self.changepoint_prior_)).to_event(1))
 
+
         # If no observations are given, we assume we are in
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
@@ -868,25 +1168,38 @@ class Chronos:
         betas = pyro.sample(f"betas", dist.Normal(torch.zeros(X_seasonality.size(1)), 
                                                   torch.full((X_seasonality.size(1),), 10.0)).to_event(1))
         seasonality = X_seasonality.matmul(betas)
+
+        seasonality = self.compute_seasonality(seasonality)
+
+        # Sample observations based on the appropriate distribution
+        return self.predict_likelihood("MAP", self.distribution_, trend, seasonality, y)
+
+        '''if (self.distribution_ == chronos_utils.Normal_dist_code):
+            return self.predict_normal_likelihood_("MAP", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            return self.predict_studentT_likelihood_("MAP", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            return self.predict_gamma_likelihood_("MAP", trend, seasonality, y)
+        elif (self.distribution_ == chronos_utils.Poisson_dist_code):
+            return self.predict_poisson_likelihood_("MAP", trend, seasonality, y)#'''
         
-        # Finally create a linear combination for the data
-        linear_combo = trend + seasonality
+        '''# Finally create a linear combination for the data
+        if (self.seasonality_mode_ == "add"):
+            linear_combo = trend + seasonality
+        elif (self.seasonality_mode_ == "mul"):
+            linear_combo = trend * (1+seasonality)
         mu = linear_combo
+
+        # Sample observations based on the appropriate distribution
+        if (self.distribution_ == chronos_utils.Normal_dist_code):
+            self.predict_normal_likelihood_("MAP", mu, y)
+        elif (self.distribution_ == chronos_utils.StudentT_dist_code):
+            self.predict_studentT_likelihood_("MAP", mu, y)
+        elif (self.distribution_ == chronos_utils.Gamma_dist_code):
+            self.predict_gamma_likelihood_("MAP", mu, y)
         
-        # Define additional paramters specifying the likelihood
-        # distribution. In the default cause, it is the
-        # standard deviation and the degrees of freedom for the
-        # t-distribution
-        sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
-        df = pyro.sample("df", dist.HalfCauchy(1.0))
-         
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", X_time.size(0)):
-            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
             
-        return mu
+        return mu#'''
     
     
     ########################################################################################################################
@@ -992,6 +1305,7 @@ class Chronos:
             samples = predictive(X_time, X_seasonality, A, self.changepoints)
             
             
+            
             # Calculate ntiles based on the CI provided. Each side should have
             # CI/2 credibility
             space_on_each_side = (1.0 - ci_interval)/2.0
@@ -1014,19 +1328,27 @@ class Chronos:
                                         "trend_lower": trend_lower.detach().numpy(),
                                         "trend_upper": trend_upper.detach().numpy()})
             
+            
             # Incorporate the original values, and build the column order to return
             columns_to_return = []
+            
+            columns_to_return.append(self.time_col_)
+            predictions[self.time_col_] = future_df[self.time_col_]
+
             if (y is not None):
                 predictions[self.target_col_] = y.detach().numpy()
                 columns_to_return.append(self.target_col_)
 
-            columns_to_return.append(self.time_col_)
-            predictions[self.time_col_] = future_df[self.time_col_]
-
             columns_to_return.extend(['yhat', 'yhat_upper', 'yhat_lower', 
                                       'trend', 'trend_upper', 'trend_lower'])
 
-            return predictions[columns_to_return]
+
+            predictions = predictions[columns_to_return]
+            numeric_columns = columns_to_return[1:]
+
+            if (self.y_max is not None):
+                predictions[numeric_columns] *= self.y_max
+            return predictions
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.method_}")
 
@@ -1159,11 +1481,17 @@ class Chronos:
         '''
         if (self.method_ in ["MAP", "MLE"]):
             if (seasonality_name == "weekly"):
-                return self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
             elif (seasonality_name == "monthly"):
-                return self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
             elif (seasonality_name == "yearly"):
-                return self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
+
+            if (self.seasonality_mode_ == "add"):
+                seasonality['Y'] *= self.y_max
+            elif (self.seasonality_mode_ == "mul"):
+                seasonality['Y'] = 100*(1.0 + seasonality['Y'])
+            return seasonality
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
@@ -1234,9 +1562,12 @@ class Chronos:
         # Monday is assumed to be 0
         weekdays_numeric = np.arange(0, 7, 1)
         weekdays = chronos_utils.weekday_names_
+        if (self.trained_on_weekend_ == False):
+            weekdays_numeric = weekdays_numeric[:-2]
+            weekdays = weekdays[:-2]
 
         # Compute seasonal response
-        seasonality = self.compute_seasonality_(weekly_params, weekdays_numeric, 7)
+        seasonality = self.compute_seasonality_(weekly_params, weekdays_numeric, weekdays_numeric.shape[0])
             
         # Package everything nicely into a df
         weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
@@ -1317,6 +1648,25 @@ class Chronos:
                                            "Y": seasonality})
         
         return yearly_seasonality
+    
+    ########################################################################################################################
+    @property
+    def changepoints_values(self):
+        '''
+            TODO: update
+        '''
+        past_deltas = pyro.param(f"{self.param_prefix_}delta")
+        return past_deltas
+    ########################################################################################################################
+    @property
+    def coef_(self):
+        '''
+            TODO: update
+        '''
+        intercept_init = pyro.param(f"{self.param_prefix_}intercept")
+        slope_init = pyro.param(f"{self.param_prefix_}trend_slope")        
+        return [intercept_init, slope_init]
+
     ########################################################################################################################
     def plot_components(self, predictions, changepoint_threshold = 0.0, figure_name = None, figsize=(15,15)):
         '''
@@ -1355,16 +1705,13 @@ class Chronos:
 
 
         
+        
         fig = plt.figure(tight_layout=True, figsize=figsize)
-        gs = gridspec.GridSpec(plot_num, 4)
+        gs = gridspec.GridSpec(plot_num, 1)
 
         current_axs = 2
-        ax = fig.add_subplot(gs[:current_axs, : ])
-        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions")
-        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.prediction_color, alpha=0.3)
-        ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
-        ax.set_xlabel("Date", size=16)
-        ax.set_ylabel("Values", size=16)
+        # Plot the predictions
+        self.plot_predictions(predictions, fig=fig, gs_section=gs[:current_axs, :])
 
 
         
@@ -1397,12 +1744,8 @@ class Chronos:
             current_axs += 1
 
 
-        # Finally, plot the residuals      
-        ax = fig.add_subplot(gs[current_axs, :])  
-        X = predictions[self.time_col_]
-        Y = predictions[self.target_col_]
-        Y_hat = predictions['yhat']
-        self.plot_residuals(X, Y, Y_hat, axs=ax)
+        # Finally, plot the residuals             
+        self.plot_residuals(predictions, fig, gs[current_axs])
 
 
         # Adjust the spacing between the subplots so differnet text components 
@@ -1417,6 +1760,42 @@ class Chronos:
         plt.show()
 
         return fig
+    ########################################################################################################################
+    def plot_predictions(self, predictions, fig=None, gs_section=None):
+        '''
+            TODO: update
+        '''
+
+        single_figure = False
+        if (fig is None):
+            single_figure = True
+
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1,1, figure=fig)
+            gs_section = gs[0,0]
+
+        ax = fig.add_subplot(gs_section)
+
+        # plot credibility intervals
+        ax.fill_between(predictions[self.time_col_], predictions['yhat_upper'], predictions['yhat_lower'], color=self.uncertainty_color, alpha=0.3)
+
+        # plot true data points, but only if there is at least one non-nan value
+        if (predictions[self.target_col_].isna().sum() < predictions.shape[0]):
+            ax.scatter(predictions[self.time_col_], predictions[self.target_col_], c=self.history_color, label="observed")
+
+        # plot predictions
+        ax.plot(predictions[self.time_col_], predictions['yhat'], c=self.prediction_color, label="predictions", linewidth=3)
+        
+        
+        # Set up plot
+        ax.set_xlim(predictions[self.time_col_].min(), predictions[self.time_col_].max())
+        ax.set_xlabel("Date", size=16)
+        ax.set_ylabel("Values", size=16)
+        ax.set_title('Predictions', size=18)
+
+        if (single_figure):
+            plt.show()
+            return fig
     ########################################################################################################################
     def plot_trend(self, x, trend, changepoint_threshold=0.0, trend_upper=None, trend_lower=None, predictions_start_date = None, axs=None):
         '''
@@ -1463,16 +1842,25 @@ class Chronos:
 
 
         axs.plot(x, trend, linewidth=3, c=self.prediction_color)
+        axs.set_xlim(x.min(), x.max())
 
         # Optionally draw uncertainty trend
         if (trend_upper is not None):
             axs.fill_between(x, trend_upper, trend_lower, color=self.prediction_color, alpha=0.3)
 
-        # Optionally draw changepoints
-        for index, changepoint in enumerate(self.changepoints):
+        # Optionally draw changepoint
+        changepoint_values = pyro.param(f'{self.param_prefix_}delta').detach().numpy()
+
+        for index, changepoint_value in enumerate(changepoint_values):
             
-            changepoint_value = int(self.changepoints[index].item() * self.ms_to_day_ratio_/1e9)
-            changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_value)
+            # Need to inverse transform every changepoint to the date it represents
+            changepoint_raw_value = self.changepoints[index].item()
+            changepoint_day = changepoint_raw_value * self.history_max_value + self.history_min_time
+            changepoint_second = int(changepoint_day * self.ms_to_day_ratio_/1e9)
+
+            # Now we can make it into a date to use it in our X-axis, which is date based
+            changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_second)
+            
 
             if (abs(changepoint_value) >= changepoint_threshold):
                 axs.axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
@@ -1484,6 +1872,8 @@ class Chronos:
         axs.axvline(datetime.date(predictions_start_date.year, 
                                     predictions_start_date.month, 
                                     predictions_start_date.day), c="black", linestyle="--")
+
+        
 
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Growth', size=18)
@@ -1505,7 +1895,8 @@ class Chronos:
             Parameters:
             ------------
             axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                    on.
+                    on. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
 
             
             Returns:
@@ -1524,10 +1915,19 @@ class Chronos:
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
         
         axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c=self.prediction_color)
-        axs.axhline(0.0, c="black", linestyle="--")
+
+        # If we have additive seasonality we will positive and negative values
+        # but if it's multiplicative, we will only have positive values and
+        # won't be a good idea to include the 0 line, otherwise it warps
+        # the scale
+        if (self.seasonality_mode_ == "add"):
+            axs.axhline(0.0, c="black", linestyle="--")
+        else:
+            axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xticks(weekly_seasonality['X'].values)
         axs.set_xticklabels(weekly_seasonality['Label'].values)
-        axs.set_xlim(-0.1, 6.1)
+        axs.set_xlim(-0.1, weekly_seasonality['X'].max()+0.1)
         axs.set_xlabel('Weekday', size=18)
         axs.set_ylabel('Seasonality', size=18)
         axs.set_title('Weekly Seasonality', size=18)
@@ -1546,7 +1946,8 @@ class Chronos:
             Parameters:
             ------------
             axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                    on.
+                    on. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
 
             
             Returns:
@@ -1565,7 +1966,16 @@ class Chronos:
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
         axs.plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c=self.prediction_color)
-        axs.axhline(0.0, c="black", linestyle="--")
+        
+        # If we have additive seasonality we will positive and negative values
+        # but if it's multiplicative, we will only have positive values and
+        # won't be a good idea to include the 0 line, otherwise it warps
+        # the scale
+        if (self.seasonality_mode_ == "add"):
+            axs.axhline(0.0, c="black", linestyle="--")
+        else:
+            axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xticks(monthly_seasonality['X'].values[::9])
         axs.set_xticklabels(monthly_seasonality['Label'].values[::9])
         axs.set_xlim(-0.2, 30.2)
@@ -1588,7 +1998,8 @@ class Chronos:
             Parameters:
             ------------
             axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                    on.
+                    on. If no axis is passed in as an argument, a new
+                    figure is created and returned upon drawing.
 
             
             Returns:
@@ -1606,7 +2017,16 @@ class Chronos:
             fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
         axs.plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c=self.prediction_color)
-        axs.axhline(0.0, c="black", linestyle="--")
+
+        # If we have additive seasonality we will positive and negative values
+        # but if it's multiplicative, we will only have positive values and
+        # won't be a good idea to include the 0 line, otherwise it warps
+        # the scale
+        if (self.seasonality_mode_ == "add"):
+            axs.axhline(0.0, c="black", linestyle="--")
+        else:
+            axs.axhline(100.0, c="black", linestyle="--")
+            axs.yaxis.set_major_formatter(mtick.PercentFormatter())
         axs.set_xlim(datetime.date(2019, 12, 31), datetime.date(2021, 1, 2))
         axs.set_xlabel('Day of Year', size=18)
         axs.set_ylabel('Seasonality', size=18)
@@ -1617,8 +2037,9 @@ class Chronos:
             return fig
 
     ########################################################################################################################
-    def plot_residuals(self, x, y_true, y_pred, axs=None):
+    def plot_residuals(self, predictions, fig=None, gs_section=None):
         '''
+            TODO: update description
             A function which plots the residuals of the fit. An optional axis can be passed in
             for the drawing to take place on in case a subplot is used. If no matplotlib axis
             is passed in, the function draws the resulting figure and returns it
@@ -1643,18 +2064,44 @@ class Chronos:
             fig -       An optional return value. If no axis is passed in as an argument, a new
                         figure is created and returned upon drawing.
         '''
+
+        x = predictions[self.time_col_]
+        y_true = predictions[self.target_col_]
+        y_pred = predictions['yhat']
+
         y_residuals = y_true - y_pred
 
         single_figure = False
         # Make sure to build a new figure if we don't have one
-        if (axs is None):
+        if (fig is None):
             single_figure = True
-            fig, axs = plt.subplots(1, 1, figsize=(15, 5))
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1, 1, figure=fig)
+            gs_section = gs[0]
         
-        axs.scatter(x, y_residuals, c=self.prediction_color, s=4, alpha=0.2)
+        ax = fig.add_subplot(gs_section)
+        ax.set_title('Residuals', size=18)
+        #ax.set_xticks([], minor=True)
+        #ax.set_yticks([], minor=True)
+        ax.xaxis.set_ticks_position('none') 
+        ax.yaxis.set_ticks_position('none') 
+        ax.tick_params(labelbottom=False, labelleft=False)
+
+        internal_gs_1 = gridspec.GridSpecFromSubplotSpec(1, 8, subplot_spec=gs_section, wspace=0.0)
+        axs = fig.add_subplot(internal_gs_1[0, :-1])
+
+        axs.scatter(x, y_residuals, c=self.prediction_color, s=4)
+        axs.set_xlim(x.min(), x.max())
         axs.set_xlabel('Date', size=18)
         axs.set_ylabel('Residuals', size=18)
-        axs.set_title('Residuals', size=18)
+        
+
+        axs = fig.add_subplot(internal_gs_1[0, -1])
+        axs.hist(y_residuals[y_residuals <= 0.0], color=self.overprediction_color, bins=50, orientation="horizontal")#, ec="black")
+        axs.hist(y_residuals[y_residuals > 0.0], color=self.underperdiction_color, bins=50, orientation="horizontal")#, ec="black")
+        axs.xaxis.set_ticks_position('none') 
+        axs.yaxis.set_ticks_position('none') 
+        axs.tick_params(labelbottom=False, labelleft=False)
 
         if (single_figure):
             plt.show()
