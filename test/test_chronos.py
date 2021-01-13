@@ -3,6 +3,7 @@ sys.path.append('../')
 sys.path.append('./')
 
 from chronos import Chronos
+import chronos_utils
 import pytest
 import pandas as pd
 import numpy as np
@@ -30,9 +31,10 @@ def test_basic_creation():
     '''
         Test that the class can be created using both MLE and MAP methods
     '''
-    my_chronos = Chronos()
-    my_chronos = Chronos(method="MAP")
-    my_chronos = Chronos(method="MLE")
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(distribution=distribution)
+        my_chronos = Chronos(method="MAP", distribution=distribution)
+        my_chronos = Chronos(method="MLE", distribution=distribution)
 
 ######################################################################
 def test_incorrect_method_specification():
@@ -60,17 +62,17 @@ def test_predictions_not_nan(sample_data):
     '''
         Make sure no nans are returned during the prediction process
     '''
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
+        my_chronos.fit(sample_data)
 
-    my_chronos = Chronos(n_changepoints=0, max_iter=100)
-    my_chronos.fit(sample_data)
+        future_df = my_chronos.make_future_dataframe(include_history=False)
+        predictions = my_chronos.predict(future_df)
 
-    future_df = my_chronos.make_future_dataframe(include_history=False)
-    predictions = my_chronos.predict(future_df)
+        predictions.drop('y', axis=1, inplace=True)    
+        #print(predictions)
 
-    predictions.drop('y', axis=1, inplace=True)    
-    #print(predictions)
-
-    assert(predictions.isna().sum().sum() == 0)
+        assert(predictions.isna().sum().sum() == 0)
 ######################################################################
 
 def test_plotting_no_history(capsys, monkeypatch, sample_data):
@@ -78,23 +80,23 @@ def test_plotting_no_history(capsys, monkeypatch, sample_data):
         Test the plotting of data when no history is provided.
         This was an issue raised in issue #2.
     '''
-    
-    my_chronos = Chronos(n_changepoints=0, max_iter=100)
-    my_chronos.fit(sample_data)
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
+        my_chronos.fit(sample_data)
 
-    future_df = my_chronos.make_future_dataframe(include_history=False)
-    predictions = my_chronos.predict(future_df)
+        future_df = my_chronos.make_future_dataframe(include_history=False)
+        predictions = my_chronos.predict(future_df)
 
-    
-    fig = plt.figure(figsize=(15,5))
-    gs = gridspec.GridSpec(1,1, figure=fig)
-    gs_section = gs[0,0]
+        
+        fig = plt.figure(figsize=(15,5))
+        gs = gridspec.GridSpec(1,1, figure=fig)
+        gs_section = gs[0,0]
 
-    my_chronos.plot_predictions(predictions, fig=fig, gs_section=gs_section)
-    plt.savefig("test_prediction_no_history.png")
+        my_chronos.plot_predictions(predictions, fig=fig, gs_section=gs_section)
+        plt.savefig("test_prediction_no_history.png")
 
-    std_error = capsys.readouterr().err
-    assert(std_error == "")
+        std_error = capsys.readouterr().err
+        assert(std_error == "")
 
 ######################################################################
 def test_prediction_no_seasonality(sample_data):
@@ -105,16 +107,20 @@ def test_prediction_no_seasonality(sample_data):
         only the distribution parameters should
         modify the predictions
     '''
-    my_chronos = Chronos(n_changepoints=6,
-                         max_iter=100, 
-                         year_seasonality_order=0, 
-                         month_seasonality_order=0, 
-                         weekly_seasonality_order=0)
-    my_chronos.fit(sample_data)
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        if (distribution not in [chronos_utils.Poisson_dist_code, chronos_utils.HalfNormal_dist_code]):
+            # Poisson and half-normal produes very strange results here
+            my_chronos = Chronos(n_changepoints=6,
+                                max_iter=100, 
+                                distribution=distribution,
+                                year_seasonality_order=0, 
+                                month_seasonality_order=0, 
+                                weekly_seasonality_order=0)
+            my_chronos.fit(sample_data)
 
-    predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
+            predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-    assert(np.mean(np.abs(predictions['yhat'] - predictions['trend'])) <= 0.1)
+            assert(np.mean(np.abs(predictions['yhat'] - predictions['trend'])) <= 0.1)
 
 ######################################################################
 def test_prediction_no_changepoints(sample_data):
@@ -123,13 +129,15 @@ def test_prediction_no_changepoints(sample_data):
         changepoints and that fitting can 
         still be done
     '''
-    my_chronos = Chronos(n_changepoints=0, 
-                         max_iter=100)
-    my_chronos.fit(sample_data)
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(n_changepoints=0, 
+                             distribution=distribution,
+                             max_iter=100)
+        my_chronos.fit(sample_data)
 
-    predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
+        predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-    assert(my_chronos.n_changepoints_ == 0)
+        assert(my_chronos.n_changepoints_ == 0)
 
 ######################################################################
 
@@ -138,14 +146,15 @@ def test_prediction_too_small_for_default_changepoints(sample_data):
         Test that when the size of the data is too small, the
         number of changepoints gets adjusted
     '''
-    my_chronos = Chronos(max_iter=100, n_changepoints=20)
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(max_iter=100, n_changepoints=20, distribution=distribution)
 
-    # This should raise a warning about the size of the data and changepoint number
-    with pytest.warns(RuntimeWarning):
-        my_chronos.fit(sample_data)
+        # This should raise a warning about the size of the data and changepoint number
+        with pytest.warns(RuntimeWarning):
+            my_chronos.fit(sample_data)
 
-    future_df = my_chronos.make_future_dataframe()
-    predictions = my_chronos.predict(future_df)
+        future_df = my_chronos.make_future_dataframe()
+        predictions = my_chronos.predict(future_df)
 
-    assert(my_chronos.n_changepoints_ < sample_data.shape[0])
+        assert(my_chronos.n_changepoints_ < sample_data.shape[0])
 

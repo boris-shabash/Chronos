@@ -115,8 +115,8 @@ class Chronos:
         self.ms_to_day_ratio_ = (1e9*60*60*24)
 
         self.y_max = None
-        self.history_min_time = None
-        self.history_max_value = None
+        self.history_min_time_seconds = None
+        self.history_max_time_seconds = None
 
         if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
             raise ValueError(f"Distribution {distribution} is not supported. Supported distribution names are: {chronos_utils.SUPPORTED_DISTRIBUTIONS}")
@@ -163,19 +163,16 @@ class Chronos:
         internal_data['yearday'] = internal_data[self.time_col_].dt.dayofyear - 1 # make days start at 0
 
         
-        # Convert ms values to days
-        internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/self.ms_to_day_ratio_
+        # Convert ms values to seconds
+        internal_data[self.time_col_] = internal_data[self.time_col_].values.astype(float)/1e9
         
-        if (self.history_min_time is None):
-            self.history_min_time = internal_data[self.time_col_].min()
-            #self.history_min_time = 0.0
+        if (self.history_min_time_seconds is None):
+            self.history_min_time_seconds = internal_data[self.time_col_].min()
+            self.history_max_time_seconds = internal_data[self.time_col_].max()
         
-        internal_data[self.time_col_] = internal_data[self.time_col_] - self.history_min_time
-
-        if (self.history_max_value is None):
-            self.history_max_value = internal_data[self.time_col_].max()
-            #self.history_max_value = 1.0
-        internal_data[self.time_col_] = internal_data[self.time_col_]/self.history_max_value#'''
+        # Make time column go from 0 to 1
+        internal_data[self.time_col_] = internal_data[self.time_col_] - self.history_min_time_seconds
+        internal_data[self.time_col_] = internal_data[self.time_col_]/(self.history_max_time_seconds - self.history_min_time_seconds)
         
         
         # Keep track of the seasonal columns' names
@@ -246,7 +243,7 @@ class Chronos:
 
             Parameters:
             ------------
-            X_time -            A tensor of the time, expressed in days. The days
+            X_time -            A tensor of the time, expressed in seconds. The seconds
                                 need not be consecutive, or evenly spaced.
 
             changepoint_num -   The number of changepoints to find
@@ -260,7 +257,7 @@ class Chronos:
 
             drop_first -        Whether to drop the first measurement found. When True, this 
                                 prevents from the first measurement of being considered as 
-                                a changepoint (we don't want the first day to be a changepoint usually)
+                                a changepoint (we don't want the first second to be a changepoint usually)
 
             Returns:
             ------------
@@ -364,6 +361,7 @@ class Chronos:
         # Make a copy of the history
         self.history = data.copy()
         if (self.history[self.time_col_].dt.day_name().isin(["Sunday", "Saturday"]).any() == False):
+            print("No weekends found in training data, will only consider Monday - Friday")
             self.trained_on_weekend_ = False
         else:
             self.trained_on_weekend_ = True
@@ -379,9 +377,10 @@ class Chronos:
             warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.n_changepoints_}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
             self.n_changepoints_ = number_of_valid_changepoints
 
-        # Compute the changepoint frequency
-        self.changepoint_frequency = self.n_changepoints_/((X_time.max() - X_time.min()) * self.history_max_value)
-        self.max_train_time_days = X_time.max().item()
+        # Compute the changepoint frequency in changepoints/seconds
+        #self.changepoint_frequency = self.n_changepoints_/((X_time.max() - X_time.min()) * self.history_max_value)
+        self.changepoint_frequency = self.n_changepoints_/(self.history_max_time_seconds - self.history_min_time_seconds)
+        
         
         
         # Find a set of evenly spaced changepoints in the training data, and 
@@ -578,11 +577,11 @@ class Chronos:
                                     at each changepoint. The size is (S, ) where S is the number
                                     of changepoints
 
-            future_trend_period -   The duration of the future trend, in days. This is the
-                                    number of days the future trend spans, not the number 
+            future_trend_period -   The duration of the future trend, in seconds. This is the
+                                    number of seconds the future trend spans, not the number 
                                     of observations (for example, there can be two 
-                                    observations, 15 days apart, so the period will
-                                    be 15 days)
+                                    observations, 15 seconds apart, so the period will
+                                    be 15 seconds)
             
 
             
@@ -595,9 +594,11 @@ class Chronos:
         '''
 
         # Find the number of future changepoints in this simulation
-        probabilities = torch.tensor([self.changepoint_frequency] * future_trend_period)
-        
-        extra_changepoint_num = int(torch.bernoulli(probabilities).sum().item())
+        #probabilities = torch.tensor([self.changepoint_frequency] * future_trend_period)
+        #extra_changepoint_num = int(torch.bernoulli(probabilities).sum().item())
+
+        probabilities = torch.tensor([self.changepoint_frequency])
+        extra_changepoint_num = np.random.binomial(n=future_trend_period, p = self.changepoint_frequency)
 
         
         
@@ -668,20 +669,18 @@ class Chronos:
                                     may remain the same, in which case the input matrix is returned.
             
         '''  
-        # Simulate potential changepoint generation
+        # Simulate potential changepoint generation We've scaled the history so the last timestamp
+        # is 1.0, so we need to find, proportionally, how much the future period is 
+        # bigger
+        future_raw_value = (X_time.max() - 1.0)
+        future_seconds_number = int(future_raw_value * (self.history_max_time_seconds - self.history_min_time_seconds))
         
 
-        future_raw_value = X_time.max() - self.max_train_time_days
-        future_days_number = int(future_raw_value * self.history_max_value) 
-        
-
-        
-        future_trend_point_number = future_days_number
-        deltas = self.add_future_changepoints(past_deltas, future_trend_point_number)
+        deltas = self.add_future_changepoints(past_deltas, future_seconds_number)
 
         # Count the number of future changepoints simulated
         future_changepoint_number = int(deltas.shape[0] - self.n_changepoints_)
-
+        
         # If we need to simulate a certain number of future changepoints,
         # we will randomly draw their positions and create a new A
         # matrix to be used to correct the trend.
@@ -690,7 +689,7 @@ class Chronos:
 
             # The values start at 1.0, and torch doesn't have a random number generator
             # for random floats, only the values from 0.0 - 1.0, so need to do some magic
-            first_future_trend_value = X_time[-future_trend_point_number].item()
+            first_future_trend_value = 1.0#X_time[-future_changepoint_number].item()
             last_future_trend_value = X_time[-1].item()
 
             
@@ -1273,14 +1272,16 @@ class Chronos:
         X_time, X_seasonality, y = self.transform_data_(future_df)
 
         # Create future changepoint markers based on the proportion of changepoints
-        # encoutered in the history
-        future_changepoint_number = self.changepoint_frequency * (X_time.max() - self.max_train_time_days)
-        future_changepoint_number = round(future_changepoint_number.item())
+        # encoutered in the history. We've scaled the history so the last timestamp
+        # is 1.0, so we need to find, proportionally, how much the future period is 
+        # bigger
+        future_changepoint_number = self.changepoint_frequency * (X_time.max() - 1.0)
+        future_changepoint_number = 0 #round(future_changepoint_number.item())
 
         future_changepoint_positions = self.find_changepoint_positions(X_time, 
                                                                        future_changepoint_number, 
                                                                        1.0,
-                                                                       min_value = self.max_train_time_days, 
+                                                                       min_value = self.history_max_time_seconds, 
                                                                        drop_first = False)
 
         # Combine past and future changepoints
@@ -1855,8 +1856,8 @@ class Chronos:
             
             # Need to inverse transform every changepoint to the date it represents
             changepoint_raw_value = self.changepoints[index].item()
-            changepoint_day = changepoint_raw_value * self.history_max_value + self.history_min_time
-            changepoint_second = int(changepoint_day * self.ms_to_day_ratio_/1e9)
+            changepoint_second = int(changepoint_raw_value * (self.history_max_time_seconds - self.history_min_time_seconds) + self.history_min_time_seconds)
+            #changepoint_second = int(changepoint_day * self.ms_to_day_ratio_/1e9)
 
             # Now we can make it into a date to use it in our X-axis, which is date based
             changepoint_date_value = datetime.datetime.fromtimestamp(changepoint_second)
@@ -1867,7 +1868,7 @@ class Chronos:
         
         # Optionally mark where history ends and predictions begin
         if (predictions_start_date is None):
-            predictions_start_date = datetime.datetime.fromtimestamp(self.max_train_time_days * self.ms_to_day_ratio_/1e9)
+            predictions_start_date = datetime.datetime.fromtimestamp(self.history_max_time_seconds)
         
         axs.axvline(datetime.date(predictions_start_date.year, 
                                     predictions_start_date.month, 
