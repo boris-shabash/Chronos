@@ -832,6 +832,10 @@ class Chronos:
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
         if (y is None):
+            # Poor man's verbose printing of prediction number
+            self.predict_counter_ += 1
+            if (self.predict_counter_ > 0):
+                print(f"Prediction no: {self.predict_counter_}", end="\r")            
             deltas, combined_changepoints, A = self.simulate_potential_future(X_time, past_deltas, changepoints, A)
         else:
             # If we are not in prediction mode, we only care about learning the past
@@ -915,7 +919,18 @@ class Chronos:
         '''
         pass
     
-    
+    ########################################################################################################################
+    def turn_predictors_positive(predict_func):
+        '''
+            TODO: update
+        '''
+        def wrapper(chronos_object, method, trend, seasonality, y):
+            trend = torch.nn.functional.softplus(trend, beta=100)
+            seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+
+            predict_func(chronos_object, method, trend, seasonality, y)
+        
+        return wrapper
     ########################################################################################################################
     def predict_normal_likelihood_(self, method, trend, seasonality, y):
         '''
@@ -949,6 +964,7 @@ class Chronos:
 
         return mu
     ########################################################################################################################
+    #@turn_predictors_positive
     def predict_halfnormal_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
@@ -1013,12 +1029,14 @@ class Chronos:
 
         return mu
     ########################################################################################################################
+    #@turn_predictors_positive
     def predict_gamma_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
         '''
         trend = torch.nn.functional.softplus(trend, beta=100)
-        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+        #seasonality = torch.nn.functional.softplus(seasonality, beta=100)
+
         pyro.deterministic('trend', trend)
 
         if (self.seasonality_mode_ == "add"):
@@ -1026,6 +1044,7 @@ class Chronos:
         elif (self.seasonality_mode_ == "mul"):
             linear_combo = trend * seasonality 
 
+        linear_combo = torch.nn.functional.softplus(linear_combo, beta=100)
         mu = linear_combo + torch.finfo(torch.float32).eps
 
 
@@ -1039,14 +1058,7 @@ class Chronos:
                               torch.tensor(1.0), 
                               constraint = constraints.positive)
 
-                
-        mu_positive = mu
-        '''if (mu.min() <= 0.0):
-            mu_positive = mu - mu.min() + torch.finfo(torch.float32).eps
-        else:
-            mu_positive = mu#'''
-
-        shape = rate * mu_positive
+        shape = rate * mu
          
         if (y is not None):
             y_obs = y + torch.finfo(torch.float32).eps
@@ -1060,6 +1072,7 @@ class Chronos:
 
         return mu
     ########################################################################################################################
+    #@turn_predictors_positive
     def predict_poisson_likelihood_(self, method, trend, seasonality, y):
         '''
             TODO: update
@@ -1152,6 +1165,11 @@ class Chronos:
 
         
         if (y is None):
+            # Poor man's verbose printing of prediction number
+            self.predict_counter_ += 1
+            if (self.predict_counter_ > 0):
+                print(f"Prediction no: {self.predict_counter_}", end="\r") 
+                       
             deltas, combined_changepoints, A = self.simulate_potential_future(X_time, past_deltas, changepoints, A)
         else:
             # If we are not in prediction mode, we only care about learning the past
@@ -1293,7 +1311,7 @@ class Chronos:
         # Create changepoint matrix for all changepoints
         A = self.make_A_matrix(X_time, self.changepoints)
 
-
+        self.predict_counter_ = -2
         # For point estimates, use the predictive interface
         if (self.method_ in ["MAP", "MLE"]):
             # https://pyro.ai/examples/bayesian_regression.html#Model-Evaluation
