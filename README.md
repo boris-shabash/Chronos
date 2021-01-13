@@ -1,5 +1,6 @@
 # Chronos
 
+test: $\mu = g(t) + s(t)$
 
 Simple time series prediction model. Implemented using Pyro and greatly inspired by Prophet.
 
