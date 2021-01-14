@@ -1,22 +1,16 @@
-'''
-There should be a few specs for this method:
+# -*- coding: utf-8 -*-
+# Copyright (c) Boris Shabash
 
-* Should have a scikit-learn like interface (fit, predict)
-* Should have support for MLE, MAP, MCMC, and SVI
-* Parameters should be easy to grab
-* Should support arbitrary residual distributions
-* Should support censored data
-
-'''
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 
 import chronos_utils
 import pandas as pd
 import numpy as np
-import math
 
 import torch
-from torch.optim import SGD, Rprop, Adam
+from torch.optim import Rprop
 from torch.distributions import constraints
 
 import pyro
@@ -31,27 +25,27 @@ from pyro.infer.autoguide.initialization import init_to_feasible
 import warnings
 import logging
 
-pyro.enable_validation(False)
 pyro.enable_validation(True)
 
-torch.set_default_tensor_type(torch.FloatTensor)
 class Chronos:
     '''
             
 
         Parameters:
         ------------
-        method="MAP" -              [str] The estimation method used. Currently only supports one of "MAP" 
-                                    (Maximum A Posteriori), or "MLE" (Maximum Likelihood Estimation).
-                                    If "MLE" is chosen, 'changepoint_prior_scale' is ignored. 
+        method="MAP" -              [str] The estimation method used. Currently only 
+                                    supports one of "MAP" (Maximum A Posteriori), or "MLE"
+                                    (Maximum Likelihood Estimation). If "MLE" is chosen, 
+                                    'changepoint_prior_scale' is ignored. 
 
                                     Default is "MAP"
 
-        n_changepoints -            [int] The number of changepoints the model considers when fitting to the
-                                    data, must be 0 or larger. Changepoints are points in time when 
-                                    the slope of the trend can change. More changepoints will allow for 
-                                    a better fit, but will also increase uncertainty when predicting into 
-                                    the future. 
+        n_changepoints -            [int] The number of changepoints the model considers
+                                    when fitting to the data, must be 0 or larger. 
+                                    Changepoints are points in time when the slope of the
+                                    trend can change. More changepoints will allow for a 
+                                    better fit, but will also increase uncertainty when 
+                                    predicting into the future. 
 
                                     Default is 20
 
@@ -283,7 +277,7 @@ class Chronos:
 
         # Yearly seasonality 
         for i in range(1, self.year_seasonality_order_+1):
-            cycle_position = i*2*math.pi*internal_data['yearday']/366 # max value will be 365
+            cycle_position = i*2*np.pi*internal_data['yearday']/366 # max value will be 365
                                                                       # since values will go from 0-365
             internal_data[f"yearly_sin_{i}"] = np.sin(cycle_position) 
             internal_data[f"yearly_cos_{i}"] = np.cos(cycle_position)
@@ -292,7 +286,7 @@ class Chronos:
         
         # Monthly seasonality
         for i in range(1, self.month_seasonality_order_+1):
-            cycle_position = i*2*math.pi*internal_data['monthday']/31 # max value will be 30 since values
+            cycle_position = i*2*np.pi*internal_data['monthday']/31 # max value will be 30 since values
                                                                       # will go from 0 to 30
             internal_data[f"monthly_sin_{i}"] = np.sin(cycle_position) 
             internal_data[f"monthly_cos_{i}"] = np.cos(cycle_position)
@@ -301,10 +295,10 @@ class Chronos:
         # Weekly seasonality
         for i in range(1, self.weekly_seasonality_order_+1):
             if (self.trained_on_weekend_ == True):
-                cycle_position = i*2*math.pi*internal_data['weekday']/7 # max value will be 6 since values
+                cycle_position = i*2*np.pi*internal_data['weekday']/7 # max value will be 6 since values
                                                                         # will go from 0 to 6
             else:
-                cycle_position = i*2*math.pi*internal_data['weekday']/5 # max value will be 4 since values
+                cycle_position = i*2*np.pi*internal_data['weekday']/5 # max value will be 4 since values
                                                                         # will go from 0 to 4
             internal_data[f"weekly_sin_{i}"] = np.sin(cycle_position) 
             internal_data[f"weekly_cos_{i}"] = np.cos(cycle_position) 
@@ -896,20 +890,20 @@ class Chronos:
     ########################################################################################################################
     def build_seasonality_(self, seasonality):
         '''
-            TODO: update
-            A function which computes the trend component of the model. i.e. the growth
-            excluding any seasonalities
+            A function which computes the seasonality component of the model. 
+            This function simply adjusts the value in case we are using
+            multiplicative combination of trend and seasonality.
 
 
             Parameters:
             ------------
-            
-            
-
+            seasonality -   [tensor] The seasonality tensor computed from the seasonal
+                            coefficients
             
             Returns:
             ------------
-            trend -             A 1D tensor of the trend, or growth, excluding any seasonalities
+            trend -         [tensor A 1D tensor of the seasonality, modified if the 
+                            method used is multiplication
             
         '''   
 
@@ -987,7 +981,7 @@ class Chronos:
         seasonality = self.build_seasonality_(seasonality)
 
         # Sample observations based on the appropriate distribution
-        mu = self.predict_likelihood("MLE", self.distribution_, trend, seasonality, y)
+        mu = self.predict_likelihood_("MLE", self.distribution_, trend, seasonality, y)
 
         return mu
 
@@ -1076,18 +1070,31 @@ class Chronos:
     ########################################################################################################################
     def predict_normal_likelihood_(self, method, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to specify a normal distribution, conditioned on the observed
+            data.
+            An additional sigma (standard deviation) value is registered as 
+            either a distribution or a parameter based on the method used
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
 
-        '''pyro.deterministic('trend', trend)
-
-        if (self.seasonality_mode_ == "add"):
-            linear_combo = trend + seasonality
-        elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
-
-        mu = linear_combo'''
-
+        # Compute expected values
         mu = self.compute_mu_(trend, seasonality)
         
         # Define additional paramters specifying the likelihood
@@ -1108,28 +1115,36 @@ class Chronos:
 
         return mu
     ########################################################################################################################
-    #@turn_predictors_positive
     def predict_halfnormal_likelihood_(self, method, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to specify a half-normal distribution, conditioned on the observed
+            data.
+            A sigma (standard deviation) value is computed
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
-        '''trend = torch.nn.functional.softplus(trend, beta=100)
-        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
 
-        pyro.deterministic('trend', trend)
-
-        if (self.seasonality_mode_ == "add"):
-            linear_combo = trend + seasonality
-        elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
-
-        mu = linear_combo#'''
-
+        # Compute expected values
         mu = self.compute_mu_(trend, seasonality, turn_positive=True)
 
         # since mu = sigma * root(2)/root(pi)
         # sigma = mu * root(pi)/root(2)
-
         sigma = mu * ((np.pi/2)**0.5) + torch.finfo(torch.float32).eps
         
          
@@ -1143,18 +1158,32 @@ class Chronos:
     ########################################################################################################################
     def predict_studentT_likelihood_(self, method, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to specify a Student t-distribution, conditioned on the observed
+            data.
+            Additional sigma (standard deviation), and df (degrees of freedom) 
+            values are registered as either distributions or parameters 
+            based on the method used
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
         
-        '''pyro.deterministic('trend', trend)
-
-        if (self.seasonality_mode_ == "add"):
-            linear_combo = trend + seasonality
-        elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
-
-        mu = linear_combo#'''
-
+        # Compute expected values
         mu = self.compute_mu_(trend, seasonality)
 
         # Define additional paramters specifying the likelihood
@@ -1178,24 +1207,33 @@ class Chronos:
 
         return mu
     ########################################################################################################################
-    #@turn_predictors_positive
     def predict_gamma_likelihood_(self, method, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to specify a gamma distribution, conditioned on the observed
+            data.
+            An additional rate value is registered as either a distribution 
+            or a parameter based on the method used, and a shape tensor
+            is computed based on the rate and mu.
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
-        '''trend = torch.nn.functional.softplus(trend, beta=100)
-        #seasonality = torch.nn.functional.softplus(seasonality, beta=100)
-
-        pyro.deterministic('trend', trend)
-
-        if (self.seasonality_mode_ == "add"):
-            linear_combo = trend + seasonality
-        elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
-
-        linear_combo = torch.nn.functional.softplus(linear_combo, beta=100)
-        mu = linear_combo + torch.finfo(torch.float32).eps'''
-
+        # Compute expected values
         mu = self.compute_mu_(trend, seasonality, turn_positive=True)
 
 
@@ -1223,22 +1261,32 @@ class Chronos:
 
         return mu
     ########################################################################################################################
-    #@turn_predictors_positive
     def predict_poisson_likelihood_(self, method, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to specify a Poisson distribution, conditioned on the observed
+            data.
+            A rate tensor is computed based on the expected values.
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
-        '''trend = torch.nn.functional.softplus(trend, beta=100)
-        seasonality = torch.nn.functional.softplus(seasonality, beta=100)
-        pyro.deterministic('trend', trend)
 
-        if (self.seasonality_mode_ == "add"):
-            linear_combo = trend + seasonality
-        elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
-
-        mu = linear_combo + torch.finfo(torch.float32).eps#'''
-
+        # Compute expected values
         mu = self.compute_mu_(trend, seasonality, turn_positive=True)
 
 
@@ -1253,10 +1301,32 @@ class Chronos:
 
         return mu
     ########################################################################################################################    
-    def predict_likelihood(self, method, distribution, trend, seasonality, y):
+    def predict_likelihood_(self, method, distribution, trend, seasonality, y):
         '''
-            TODO: update
+            A function which takes up the trend and seasonalities and combines
+            them to form the expected values, then conditions them
+            on the observed data based on the distribution requested
+
+            Parameters:
+            ------------
+
+            method -        [str] Which method is used
+
+            distribution -  [str] Which distribution to use
+            
+            trend -         [tensor] The trend regressor specifying the trend observed
+                            excluding seasonalities
+
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+
+            y -             [tensor] The observed values
+            
+            Returns:
+            ------------
+            mu -            [tensor] The resulting expected value when combining trend
+                            and seasonality based on the seasonality mode
         '''
+
         if (distribution == chronos_utils.Normal_dist_code):
             return self.predict_normal_likelihood_(method, trend, seasonality, y)
         elif (distribution == chronos_utils.StudentT_dist_code):
@@ -1279,26 +1349,26 @@ class Chronos:
             Parameters:
             ------------
             
-            X_time -        The time tensor specifying the time regressor
+            X_time -        [tensor] The time tensor specifying the time regressor
 
-            X_seasonality - The seasonality tensor specifying all cyclical regressors
+            X_seasonality - [tensor] The seasonality tensor specifying all cyclical regressors
 
-            A -             The changepoint matrix defining, for each time stamp,
+            A -             [tensor] The changepoint matrix defining, for each time stamp,
                             which changepoints occured. If the function is run in
                             prediction mode (where y is None), this matrix may be
                             recreated within the function. Since the recreation
                             is non-deterministic, the matrix is provided for
                             the cases where it won't have to be recreated.
 
-            changepoints -  A tensor of timestamps, in days, of when each changepoint occurs
+            changepoints -  [tensor] A tensor of timestamps of when each changepoint occurs
 
-            y -             The target to predict, i.e. the time series measurements.
+            y -             [tensor] The target to predict, i.e. the time series measurements.
                             If None, the model generates these observations instead.
 
             
             Returns:
             ------------
-            mu -            A tensor of the expected values to observe given the regressor
+            mu -            [tensor] A tensor of the expected values to observe given the regressor
                             tensors and changepoints
             
         '''
@@ -1315,8 +1385,6 @@ class Chronos:
         # If no observations are given, we assume we are in
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
-
-        
         if (y is None):
             # Poor man's verbose printing of prediction number
             if (self.prediction_verbose_ == True):
@@ -1343,7 +1411,7 @@ class Chronos:
         seasonality = self.build_seasonality_(seasonality)
 
         # Sample observations based on the appropriate distribution
-        mu = self.predict_likelihood("MAP", self.distribution_, trend, seasonality, y)
+        mu = self.predict_likelihood_("MAP", self.distribution_, trend, seasonality, y)
 
         return mu
     
@@ -1358,7 +1426,6 @@ class Chronos:
                 include_history=True,
                 verbose=True):
         '''
-            TODO: update
             A function which accepts a dataframe with at least one column, the timestamp
             and employes the learned parameters to predict observations as well as 
             credibility intervals and uncertainty intervals.
@@ -1370,39 +1437,51 @@ class Chronos:
 
             Parameters:
             ------------
-            future_df -         The dataframe. Must at least have a single column of timestamp
+            future_df -         [DataFrame] The dataframe. Must at least have a single column of timestamp
                                 with the same name as the training dataframe. If data is not
                                 provided, period, frequency, and include_history must be
                                 provided. If data is provided, period, frequency, and include_history
                                 are ignored
 
-            sample_number -     The number of posterior samples to generate in order to
+                                Default is None
+
+            sample_number -     [int] The number of posterior samples to generate in order to
                                 draw the uncertainty intervals and credibility intervals.
                                 Larger values give more accurate results, but also take
-                                longer to run. Default 1000
+                                longer to run. 
+                                
+                                Default 1000
 
-            ci_interval -       The credibility interval range to generate. 0.95 generates
-                                a range such that 95% of all observations fall within this 
-                                range. Default 0.95.
+            ci_interval -       [float] The credibility interval range to generate. Must be
+                                between 0.0 and 1.0, 0.95 generates a range such that 95% 
+                                of all observations fall within this range. 
+                                
+                                Default is 0.95.
 
-            period -            The number of future observations based on
+            period -            [int] The number of future observations based on
                                 frequency. The default is 30, and the default
-                                for frequency id 'D' which means 30 days ahead
+                                for frequency id 'D' which means 30 days ahead.
+
+                                Default is 30
             
-            frequency -         The frequency of the period. See 
+            frequency -         [str] The frequency of the period. See 
                                 https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
                                 for a list of supported freuqncies.
                                 The default is 'D' which stands for calendar 
-                                day
+                                day.
 
-            incldue_history -   A boolean describing whether to include history
-                                observations or not used by the fit method
+                                Default is 'D'
+
+            incldue_history -   [bool] A boolean describing whether to include history
+                                observations or not used by the fit method.
+
+                                Default is True
             
 
             
             Returns:
             ------------
-            predictions -       A dataframe with:
+            predictions -       [DataFrame] A dataframe with:
                                 [time_col] -    The time column fed into this method
                                 [target_col] -  The name for the original target column if history is included in the dataframe
                                 yhat -          The predicted value for observations
@@ -1426,27 +1505,9 @@ class Chronos:
 
         # Transform data into trend and seasonality as before
         X_time, X_seasonality, y = self.transform_data_(future_df)
-
-        # Create future changepoint markers based on the proportion of changepoints
-        # encoutered in the history. We've scaled the history so the last timestamp
-        # is 1.0, so we need to find, proportionally, how much the future period is 
-        # bigger
-        future_changepoint_number = self.changepoint_frequency * (X_time.max() - 1.0)
-        future_changepoint_number = 0 #round(future_changepoint_number.item())
-
-        future_changepoint_positions = self.find_changepoint_positions(X_time, 
-                                                                       future_changepoint_number, 
-                                                                       1.0,
-                                                                       min_value = self.history_max_time_seconds, 
-                                                                       drop_first = False)
-
-        # Combine past and future changepoints
-        combined_changepoints = []
-        combined_changepoints.extend(self.changepoints)
-        combined_changepoints.extend(future_changepoint_positions)
-        combined_changepoints = torch.tensor(combined_changepoints)
         
-        # Create changepoint matrix for all changepoints
+        # Create changepoint matrix for historical changepoints, in case we need no
+        # new changepoints
         A = self.make_A_matrix(X_time, self.changepoints)
 
         self.predict_counter_ = -2
@@ -1526,23 +1587,29 @@ class Chronos:
 
             Parameters:
             ------------
-            period -            The number of future observations based on
+            period -            [int] The number of future observations based on
                                 frequency. The default is 30, and the default
-                                for frequency id 'D' which means 30 days ahead
+                                for frequency id 'D' which means 30 days ahead.
+
+                                Default is 30
             
-            frequency -         The frequency of the period. See 
+            frequency -         [str] The frequency of the period. See 
                                 https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
                                 for a list of supported freuqncies.
                                 The default is 'D' which stands for calendar 
-                                day
+                                day.
 
-            incldue_history -   A boolean describing whether to include history
-                                observations or not used by the fit method
+                                Default is 'D'
+
+            incldue_history -   [bool] A boolean describing whether to include history
+                                observations or not used by the fit method.
+
+                                Default is True
 
             
             Returns:
             ------------
-            future_df -         A dataframe with a datestamp column, and a 
+            future_df -         [DataFrame] A dataframe with a datestamp column, and a 
                                 target column ready to be used by the 
                                 predict method. The datestamp and target
                                 column names are the same as the ones
@@ -1582,15 +1649,15 @@ class Chronos:
 
             Parameters:
             ------------
-            param_pairs -       A tensor of parameter pairs. The tensor should
+            param_pairs -       [tensor] A tensor of parameter pairs. The tensor should
                                 always be of shape (N, 2) where N is the order
                                 of the given seasonality.
 
-            numeric_values -    A tensor of the time values to be calculated. 
+            numeric_values -    [tensor] A tensor of the time values to be calculated. 
                                 This can be weekdays, which will range from 0-6, 
                                 month days which will range from 0-30 etc' 
 
-            cycle_periods -     The period of the cycle. For weekdays, the cycle
+            cycle_periods -     [tensor] The period of the cycle. For weekdays, the cycle
                                 repeats every 7 days, so the period will be
                                 7. For months, it will be 31. For years, 366, etc'
             
@@ -1598,7 +1665,7 @@ class Chronos:
             
             Returns:
             ------------
-            seasonality -       The seasonal component specified by
+            seasonality -       [tensor] The seasonal component specified by
                                 the input parameters. e.g. weekly seasonality,
                                 or yearly seasonality.
         '''
@@ -1614,7 +1681,7 @@ class Chronos:
             sin_coef = pair[0]
             cosin_coef = pair[1]
             
-            cycle_pos = cycle_order * 2 * math.pi * numeric_values/cycle_period
+            cycle_pos = cycle_order * 2 * np.pi * numeric_values/cycle_period
             seasonality += (sin_coef * np.sin(cycle_pos)) + (cosin_coef * np.cos(cycle_pos))
 
         return seasonality
@@ -1627,22 +1694,22 @@ class Chronos:
 
             Parameters:
             ------------
-            seasonality_name -  A string denoting the name of the seasonality
+            seasonality_name -  [str] A string denoting the name of the seasonality
                                 requested
             
             
             Returns:
             ------------
-            seasonality -       A tensor of shape (7, ) denoting the weekly seasonal patterns
+            seasonality -       [DataFrame] A pandas dataframe of the requested seasonality
             
         '''
         if (self.method_ in ["MAP", "MLE"]):
             if (seasonality_name == "weekly"):
-                seasonality = self.get_weekly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_weekly_seasonality_point_(f'{self.param_prefix_}betas')
             elif (seasonality_name == "monthly"):
-                seasonality = self.get_monthly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_monthly_seasonality_point_(f'{self.param_prefix_}betas')
             elif (seasonality_name == "yearly"):
-                seasonality = self.get_yearly_seasonality_point(f'{self.param_prefix_}betas')
+                seasonality = self.get_yearly_seasonality_point_(f'{self.param_prefix_}betas')
 
             if (self.seasonality_mode_ == "add"):
                 if (self.y_max is not None):
@@ -1653,7 +1720,7 @@ class Chronos:
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
-    def get_seasonal_params(self, param_name, seasonality_name):
+    def get_seasonal_params_(self, param_name, seasonality_name):
         '''
             A function which accepts the name of the parameter store where
             seasonality coefficients are stored, and the seasonality name,
@@ -1662,16 +1729,16 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            The name of the global param store where
+            param_name -            [str] The name of the global param store where
                                     seasonality is stored.  
 
-            seasonality_name -      The name of the required seasonality. e.g.
+            seasonality_name -      [str] The name of the required seasonality. e.g.
                                     "weekly" or "monthly"
 
             
             Returns:
             ------------
-            seasonality_params -    A tensor of shape (N,2) where N
+            seasonality_params -    [tensor] A tensor of shape (N,2) where N
                                     is the order of the requested 
                                     seasonality. This tensor contains
                                     the seasonality coefficients.
@@ -1694,7 +1761,7 @@ class Chronos:
         return seasonal_params
     
     ########################################################################################################################
-    def get_weekly_seasonality_point(self, param_name):
+    def get_weekly_seasonality_point_(self, param_name):
         '''
             A function which accepts the name of the parameter where point estimates
             of seasonalities are stored and returns a pandas dataframe containing
@@ -1702,20 +1769,21 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            The name of the pyro parameter store where the point
+            param_name -            [str] The name of the pyro parameter store where the point
                                     estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    A pandas dataframe containing three columns:
-                                    X - The values for the weekly seasonality (0-6)
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+                                    
+                                    X -     The values for the weekly seasonality (0-6)
                                     Label - The labels for the days ("Monday" - "Sunday")
-                                    Y - The seasonal response for each day
+                                    Y -     The seasonal response for each day
         '''
 
         # Get the parameter pairs of coefficients
-        weekly_params = self.get_seasonal_params(param_name, "weekly")
+        weekly_params = self.get_seasonal_params_(param_name, "weekly")
         
         # Monday is assumed to be 0
         weekdays_numeric = np.arange(0, 7, 1)
@@ -1734,7 +1802,7 @@ class Chronos:
         
         return weekly_seasonality
     ########################################################################################################################
-    def get_monthly_seasonality_point(self, param_name):
+    def get_monthly_seasonality_point_(self, param_name):
         '''
             A function which accepts the name of the parameter where point estimates
             of seasonalities are stored and returns a pandas dataframe containing
@@ -1742,20 +1810,21 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            The name of the pyro parameter store where the point
+            param_name -            [str] The name of the pyro parameter store where the point
                                     estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    A pandas dataframe containing three columns:
-                                    X - The values for the monthly seasonality (0-30)
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+                                    
+                                    X -     The values for the monthly seasonality (0-30)
                                     Label - The labels for the days ("1st" - "31st")
-                                    Y - The seasonal response for each day
+                                    Y -     The seasonal response for each day
         '''
 
         # Get the parameter pairs of coefficients
-        monthly_params = self.get_seasonal_params(param_name, "monthly")
+        monthly_params = self.get_seasonal_params_(param_name, "monthly")
         
         monthdays_numeric = np.arange(0, 31, 1)
         monthday_names = chronos_utils.monthday_names_
@@ -1771,7 +1840,7 @@ class Chronos:
         return monthly_seasonality
 
     ########################################################################################################################
-    def get_yearly_seasonality_point(self, param_name):
+    def get_yearly_seasonality_point_(self, param_name):
         '''
             A function which accepts the name of the parameter where point estimates
             of seasonalities are stored and returns a pandas dataframe containing
@@ -1779,20 +1848,21 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            The name of the pyro parameter store where the point
+            param_name -            [str] The name of the pyro parameter store where the point
                                     estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    A pandas dataframe containing three columns:
-                                    X - The values for the yearly seasonality days (0-366)
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+                                    
+                                    X -     The values for the yearly seasonality days (0-366)
                                     Label - The labels for the days (the individual dates)
-                                    Y - The seasonal response for each day
+                                    Y -     The seasonal response for each day
         '''
         
         # Get the parameter pairs of coefficients
-        yearly_params = self.get_seasonal_params(param_name, "yearly")
+        yearly_params = self.get_seasonal_params_(param_name, "yearly")
         
         yeardays_numeric = np.arange(0, 366, 1)
         yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
@@ -1811,7 +1881,8 @@ class Chronos:
     @property
     def changepoints_values(self):
         '''
-            TODO: update
+            A property which return the changepoint values
+            of the history
         '''
         past_deltas = pyro.param(f"{self.param_prefix_}delta")
         return past_deltas
@@ -1819,16 +1890,9 @@ class Chronos:
     @property
     def changepoints_positions(self):
         '''
-            TODO: update
+            A property which return the changepoint positions (timestamps)
+            of the history
         '''
         positions = (self.changepoints * (self.history_max_time_seconds - self.history_min_time_seconds) + self.history_min_time_seconds)
         return positions
     ########################################################################################################################
-    @property
-    def coef_(self):
-        '''
-            TODO: update
-        '''
-        intercept_init = pyro.param(f"{self.param_prefix_}intercept")
-        slope_init = pyro.param(f"{self.param_prefix_}trend_slope")        
-        return [intercept_init, slope_init]

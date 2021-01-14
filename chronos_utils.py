@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) Boris Shabash
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 monthday_names_ = ["1st", "2nd", "3rd"]
 monthday_names_.extend([f"{i}th" for i in range(4, 21)])
 monthday_names_.extend(["21st", "22nd", "23rd"])
