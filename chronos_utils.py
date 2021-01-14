@@ -14,7 +14,8 @@ LogNormal_dist_code = "LogNormal"
 Gamma_dist_code = "Gamma"
 Poisson_dist_code = "Poisson"
 HalfNormal_dist_code = "HalfNormal"
-SUPPORTED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code, Gamma_dist_code, Poisson_dist_code, HalfNormal_dist_code]
+
+SUPPORTED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code, Gamma_dist_code]
 
 
 SUPPORTED_METHODS = ["MAP", "MLE"]

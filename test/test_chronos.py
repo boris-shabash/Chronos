@@ -4,6 +4,7 @@ sys.path.append('./')
 
 from chronos import Chronos
 import chronos_utils
+import chronos_plotting
 import pytest
 import pandas as pd
 import numpy as np
@@ -74,7 +75,29 @@ def test_predictions_not_nan(sample_data):
 
         assert(predictions.isna().sum().sum() == 0)
 ######################################################################
+def test_plotting(capsys, monkeypatch, sample_data):
+    '''
+        Test the plotting of data when no history is provided.
+        This was an issue raised in issue #2.
+    '''
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
+        my_chronos.fit(sample_data)
 
+        future_df = my_chronos.make_future_dataframe(include_history=True)
+        predictions = my_chronos.predict(future_df)
+
+        
+        fig = plt.figure(figsize=(15,5))
+        gs = gridspec.GridSpec(1,1, figure=fig)
+        gs_section = gs[0,0]
+
+        chronos_plotting.plot_components(predictions, my_chronos, figure_name="test_prediction.png")
+
+        std_error = capsys.readouterr().err
+        assert(std_error == "")
+
+######################################################################
 def test_plotting_no_history(capsys, monkeypatch, sample_data):
     '''
         Test the plotting of data when no history is provided.
@@ -92,7 +115,7 @@ def test_plotting_no_history(capsys, monkeypatch, sample_data):
         gs = gridspec.GridSpec(1,1, figure=fig)
         gs_section = gs[0,0]
 
-        my_chronos.plot_predictions(predictions, fig=fig, gs_section=gs_section)
+        chronos_plotting.plot_predictions(predictions, my_chronos, fig=fig, gs_section=gs_section)
         plt.savefig("test_prediction_no_history.png")
 
         std_error = capsys.readouterr().err
