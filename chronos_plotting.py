@@ -4,10 +4,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import numpy as np
+
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mtick
 import matplotlib.dates as mdates
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
 import datetime
 
 
@@ -27,26 +31,44 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
     '''
         TODO: update
         A function to plot all components of the predictions into a matplotlib figure. 
-        The resulting figure will have the raw predictions, the trend, all different seasonalities,
-        and the residuals (the error terms) from the prediction process.
+        The resulting figure will have the raw predictions, the trend, and the residuals
+        (the error terms) from the prediction process. Seasonalities are plottted as well
+        if chronos_object is provided.
 
 
         Parameters:
         ------------
-        predictions -           A pandas dataframe returned from the .predict method of this Chronos object.
-                                The dataframe is expected to have the same columns as the dataframe used for 
-                                fitting as well as the following columns: 
-                                yhat, yhat_upper, yhat_lower, trend, trend_upper, trend_lower
+        predictions -           [DataFrame] A pandas dataframe returned from the .predict 
+                                method of  this Chronos object. The dataframe is expected
+                                to have the same columns as the dataframe used for fitting
+                                as well as the following columns: 
+                                yhat, yhat_upper, yhat_lower, trend, trend_upper, 
+                                trend_lower
 
-        changepoint_threshold - The threshold for the changepoints to be marked on the plot. Must be a non-negative
+        chronos_object -        [Chronos] A fitted chronos object that was used to 
+                                generate the predictions dataframe. If this object 
+                                is not provided seasonalities are not plotted
 
-        figure_name -           An optional parameter for the figure name for it to be saved. E.g. "myfig.png"
+                                Default is None
+
+        changepoint_threshold - [float] The threshold for the changepoints to be marked on
+                                the plot. Must be a non-negative
+
+                                Default is 0.0
+
+        figure_name -           [str] An optional parameter for the figure name for it to
+                                be saved. E.g. "myfig.png"
+
+                                Default is None
         
-        figsize -               The figure size to use
+        figsize -               [tuple] The figure size to use
+
+                                Default is (15,15)
         
         Returns:
         ------------
-        fig -                   The figure object on which all the plotting takes place
+        fig -                   [Figure] The figure object on which all the plotting takes
+                                place
         
     '''
     
@@ -71,19 +93,13 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
 
     current_axs = 2
     # Plot the predictions
-    plot_predictions(predictions, chronos_object, fig=fig, gs_section=gs[:current_axs, :])
+    ax = fig.add_subplot(gs[:current_axs, :])
+    plot_predictions(predictions, chronos_object, axs=ax)
 
     
     # Plot the trend
-    plot_trend(predictions, chronos_object, changepoint_threshold = changepoint_threshold, fig=fig, gs_section=gs[current_axs, :])
-
-    '''ax = fig.add_subplot(gs[current_axs, : ])
-    plot_trend(x = predictions[self.time_col_], 
-               trend = predictions['trend'], 
-                    changepoint_threshold = changepoint_threshold, 
-                    trend_upper = predictions['trend_upper'], 
-                    trend_lower = predictions['trend_lower'], 
-                    axs = ax)'''
+    ax = fig.add_subplot(gs[current_axs, :])
+    plot_trend(predictions, chronos_object, changepoint_threshold = changepoint_threshold, axs=ax)
     
     current_axs += 1
 
@@ -105,8 +121,9 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
             current_axs += 1
 
 
-    # Finally, plot the residuals             
-    plot_residuals(predictions, chronos_object, fig, gs[current_axs])
+    # Finally, plot the residuals      
+    ax = fig.add_subplot(gs[current_axs, :])       
+    plot_residuals(predictions, chronos_object, axs=ax)
 
 
     # Adjust the spacing between the subplots so differnet text components 
@@ -121,9 +138,40 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
 
     return fig
 ########################################################################################################################
-def plot_predictions(predictions, chronos_object=None, fig=None, gs_section=None):
+def plot_predictions(predictions, chronos_object=None, axs=None):
     '''
-        TODO: update
+        A function which produces a plot of the predictions as well
+        as historical data, if included in the predictions dataframe.
+        An optional axis can be passed in for the drawing to take place on in case a 
+        subplot is used. If no matplotlib axis is passed in, the function draws the 
+        resulting figure and returns it
+
+        Parameters:
+        ------------
+        predictions -           [DataFrame] A pandas dataframe returned from the .predict 
+                                method of  this Chronos object. The dataframe is expected
+                                to have the same columns as the dataframe used for fitting
+                                as well as the following columns: 
+                                yhat, yhat_upper, yhat_lower, trend, trend_upper, 
+                                trend_lower
+
+        chronos_object -        [Chronos] A fitted chronos object that was used to 
+                                generate the predictions dataframe. If this object 
+                                is not provided assumptions are made about the 
+                                naming in the predictions dataframe
+
+                                Default is None
+
+        axs -                   [Axis] The axis on which to perform the plotting of the
+                                matplotlib plot. If no axis is provided, a new figure
+                                is created and returned
+
+                                Default is None
+        
+        Returns:
+        ------------
+        fig -                   [Figure] The figure object on which all the plotting takes
+                                place. Only returned if no axis is provided to axs
     '''
     if (chronos_object is None):
         print("No Chronos object provided, assuming timestamp and target columns are named 'ds' and 'y'.")
@@ -134,138 +182,136 @@ def plot_predictions(predictions, chronos_object=None, fig=None, gs_section=None
         target_col = chronos_object.target_col_
 
     single_figure = False
-    if (fig is None):
+    if (axs is None):
         single_figure = True
 
         fig = plt.figure(figsize=(15,5))
         gs = gridspec.GridSpec(1,1, figure=fig)
-        gs_section = gs[0,0]
+        axs = fig.add_subplot(gs[0, 0])
 
-    ax = fig.add_subplot(gs_section)
+    
 
     # plot credibility intervals
-    ax.fill_between(predictions[time_col], 
-                    predictions['yhat_upper'], 
-                    predictions['yhat_lower'], 
-                    color=uncertainty_color_, 
-                    alpha=0.3)
+    axs.fill_between(predictions[time_col], 
+                     predictions['yhat_upper'], 
+                     predictions['yhat_lower'], 
+                     color=uncertainty_color_, 
+                     alpha=0.3)
 
     # plot true data points, but only if there is at least one non-nan value
     if (predictions[target_col].isna().sum() < predictions.shape[0]):
-        ax.scatter(predictions[time_col], 
-                   predictions[target_col], 
-                   c=history_color_, 
-                   label="observed")
+        axs.scatter(predictions[time_col], 
+                    predictions[target_col], 
+                    c=history_color_, 
+                    label="observed")
 
     # plot predictions
-    ax.plot(predictions[time_col], 
-            predictions['yhat'], 
-            c=prediction_color_, 
-            label="predictions", 
-            linewidth=3)
+    axs.plot(predictions[time_col], 
+             predictions['yhat'], 
+             c=prediction_color_, 
+             label="predictions", 
+             linewidth=3)
     
     
     # Set up plot
-    ax.set_xlim(predictions[time_col].min(), predictions[time_col].max())
-    ax.set_xlabel("Date", size=16)
-    ax.set_ylabel("Values", size=16)
-    ax.set_title('Predictions', size=18)
+    axs.set_xlim(predictions[time_col].min(), predictions[time_col].max())
+    axs.set_xlabel("Date", size=16)
+    axs.set_ylabel("Values", size=16)
+    axs.set_title('Predictions', size=18)
 
     if (single_figure):
         plt.show()
         return fig
 ########################################################################################################################
 #def plot_trend(self, x, trend, changepoint_threshold=0.0, trend_upper=None, trend_lower=None, predictions_start_date = None, axs=None):
-def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, fig=None, gs_section=None):
+def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=None):
     '''
-        TODO: update
         A function which plots the trend components, along with historical changepoints. 
-        An optional axis can be passed in for the drawing to take place on in case a subplot is used.
-        If no matplotlib axis is passed in, the function draws the resulting figure and returns it
+        An optional axis can be passed in for the drawing to take place on in case a 
+        subplot is used. If no matplotlib axis is passed in, the function draws the 
+        resulting figure and returns it
 
 
         Parameters:
         ------------
-        x -                     A tensor containing the timestamps, in days, for the period for which
-                                plotting is desired
+        predictions -           [DataFrame] A pandas dataframe returned from the .predict 
+                                method of  this Chronos object. The dataframe is expected
+                                to have the same columns as the dataframe used for fitting
+                                as well as the following columns: 
+                                yhat, yhat_upper, yhat_lower, trend, trend_upper, 
+                                trend_lower
 
-        trend -                 A tensor containing the trend values, excluding all seasonalities
+        chronos_object -        [Chronos] A fitted chronos object that was used to 
+                                generate the predictions dataframe. If this object 
+                                is not provided assumptions are made about the 
+                                naming in the predictions dataframe, and changepoints
+                                are not labeled on the plot.
 
-        changepoint_threshold - The threshold for the value of a changepoint for it to be marked
-                                on the plot
+                                Default is None
 
-        trend_upper -           A tensor containing the upper uncertainty value for the trend. If None
-                                no uncertainty is plotted. Both trend_upper and trend_lower must be 
-                                specified if uncertainty is desired
+        changepoint_threshold - [float] The threshold for the changepoints to be marked on
+                                the plot. Must be a non-negative
 
-        trend_lower -           A tensor containing the lower uncertainty value for the trend
+                                Default is 0.0
 
-        prediction_start_time - The start time to mark for the prediction. If None, the highest
-                                value seen in the training set is used
+        axs -                   [Axis] The axis on which to perform the plotting of the
+                                matplotlib plot. If no axis is provided, a new figure
+                                is created and returned
 
-        axs -                   Optional argument, a matplotlib subplot axis for the drawing to take place
-                                on.
-
+                                Default is None
         
         Returns:
         ------------
-        fig -                   An optional return value. If no axis is passed in as an argument, a new
-                                figure is created and returned upon drawing.
-    '''
+        fig -                   [Figure] The figure object on which all the plotting takes
+                                place. Only returned if no axis is provided to axs
 
     '''
-        trend = predictions['trend'], 
-                    changepoint_threshold = changepoint_threshold, 
-                    trend_upper = predictions['trend_upper'], 
-                    trend_lower = predictions['trend_lower']
-    '''
 
+    # Set everything up
     if (chronos_object is None):
         print("No Chronos object provided, assuming timestamp and target columns are named 'ds' and 'y'.")
         print("Additionally, changepoints will not be labeled on the plot")
-        time_col = "ds"
+        time_col = "ds"        
         changepoint_values = []
         changepoint_positions = []
     else:
+        # If we have a chronos object, grab the relevant data
         time_col = chronos_object.time_col_
         changepoint_values = chronos_object.changepoints_values.detach().numpy()
         changepoint_positions = chronos_object.changepoints_positions.detach().numpy()
 
+    # If no axis is passed in, make sure to create a figure
     single_figure = False
-    if (fig is None):
+    if (axs is None):
         single_figure = True
 
         fig = plt.figure(figsize=(15,5))
         gs = gridspec.GridSpec(1,1, figure=fig)
-        gs_section = gs[0,0]
-
-    ax = fig.add_subplot(gs_section)
+        axs = fig.add_subplot(gs[0,0])
 
 
 
+    # Plot the predictions
+    axs.plot(predictions[time_col], 
+             predictions['trend'], 
+             linewidth=3, 
+             c=prediction_color_)
 
-    ax.plot(predictions[time_col], 
-            predictions['trend'], 
-            linewidth=3, 
-            c=prediction_color_)
-
-    ax.set_xlim(predictions[time_col].min(), predictions[time_col].max())
+    # Set up the limits for the x axis
+    axs.set_xlim(predictions[time_col].min(), predictions[time_col].max())
 
     # Optionally draw uncertainty trend
-    ax.fill_between(predictions[time_col], 
+    axs.fill_between(predictions[time_col], 
                     predictions['trend_upper'], 
                     predictions['trend_lower'], 
                     color=prediction_color_, 
                     alpha=0.3)
 
-    # Optionally draw changepoint
-    #changepoint_values = pyro.param(f'{self.param_prefix_}delta').detach().numpy()
     
-
+    # Draw changepoints if they are present
     for index, changepoint_value in enumerate(changepoint_values):
         
         # Need to inverse transform every changepoint to the date it represents
-        #changepoint_raw_value = self.changepoints[index].item()
         changepoint_second = int(changepoint_positions[index])
 
         # Now we can make it into a date to use it in our X-axis, which is date based
@@ -273,22 +319,21 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, fig=
         
 
         if (abs(changepoint_value) >= changepoint_threshold):
-            ax.axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
+            axs.axvline(changepoint_date_value, c="black", linestyle="dotted")#'''
     
     # Optionally mark where history ends and predictions begin
     if (chronos_object is not None):
         predictions_start_date = datetime.datetime.fromtimestamp(chronos_object.history_max_time_seconds)
     
-        ax.axvline(datetime.date(predictions_start_date.year, 
-                                predictions_start_date.month, 
-                                predictions_start_date.day), c="black", linestyle="--")
+        axs.axvline(datetime.date(predictions_start_date.year, 
+                                  predictions_start_date.month, 
+                                  predictions_start_date.day), c="black", linestyle="--")
 
     
-
-    ax.set_xlabel('Date', size=18)
-    ax.set_ylabel('Growth', size=18)
-
-    ax.set_title('Trend', size=18)
+    # Make sure to add proper labels
+    axs.set_xlabel('Date', size=18)
+    axs.set_ylabel('Growth', size=18)
+    axs.set_title('Trend', size=18)
 
     if (single_figure):
         plt.show()
@@ -297,7 +342,6 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, fig=
 ########################################################################################################################
 def plot_weekly_seasonality(chronos_object, axs=None):
     '''
-        TODO: update
         A function which plots the weekly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
@@ -305,15 +349,22 @@ def plot_weekly_seasonality(chronos_object, axs=None):
 
         Parameters:
         ------------
-        axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                on. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        chronos_object -    [Chronos] A fitted chronos object that was used to 
+                            generate the predictions dataframe. 
+
+        axs -               [Axis] Optional argument, a matplotlib subplot axis for 
+                            the  drawing to take place on. If no axis is passed in 
+                            as an argument, a new figure is created and returned 
+                            upon drawing.
+
+                            Default is None
 
         
         Returns:
         ------------
-        fig -   An optional return value. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        fig -               [Figure] An optional return value. If no axis is passed
+                            in as an argument, a new figure is created and returned
+                            upon drawing.
     '''
 
     # Grab the weekly seasonality
@@ -349,7 +400,6 @@ def plot_weekly_seasonality(chronos_object, axs=None):
 ########################################################################################################################
 def plot_monthly_seasonality(chronos_object, axs=None):
     '''
-        TODO: update
         A function which plots the monthly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
@@ -357,15 +407,21 @@ def plot_monthly_seasonality(chronos_object, axs=None):
 
         Parameters:
         ------------
-        axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                on. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        chronos_object -    [Chronos] A fitted chronos object that was used to 
+                            generate the predictions dataframe. 
+
+        axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
+                            drawing to take place on. If no axis is passed in as an 
+                            argument, a new figure is created and returned upon drawing.
+
+                            Default is None
 
         
         Returns:
         ------------
-        fig -   An optional return value. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        fig -               [Figure] An optional return value. If no axis is passed in 
+                            as an argument, a new figure is created and returned upon 
+                            drawing.
     '''
     # Grab the monthly seasonality
     monthly_seasonality = chronos_object.get_seasonality("monthly")
@@ -402,7 +458,6 @@ def plot_monthly_seasonality(chronos_object, axs=None):
 ########################################################################################################################
 def plot_yearly_seasonality(chronos_object, axs=None):
     '''
-        TODO: update
         A function which plots the yearly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
@@ -410,15 +465,21 @@ def plot_yearly_seasonality(chronos_object, axs=None):
 
         Parameters:
         ------------
-        axs -   Optional argument, a matplotlib subplot axis for the drawing to take place
-                on. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        chronos_object -    [Chronos] A fitted chronos object that was used to 
+                            generate the predictions dataframe. 
+
+        axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
+                            drawing to take place on. If no axis is passed in as an 
+                            argument, a new figure is created and returned upon drawing.
+
+                            Default is None
 
         
         Returns:
         ------------
-        fig -   An optional return value. If no axis is passed in as an argument, a new
-                figure is created and returned upon drawing.
+        fig -               [Figure] An optional return value. If no axis is passed in 
+                            as an argument, a new figure is created and returned upon 
+                            drawing.
     '''
     # Grab the yearly seasonality
     yearly_seasonality = chronos_object.get_seasonality("yearly")
@@ -451,7 +512,7 @@ def plot_yearly_seasonality(chronos_object, axs=None):
         return fig
 
 ########################################################################################################################
-def plot_residuals(predictions, chronos_object=None, fig=None, gs_section=None):
+def plot_residuals(predictions, chronos_object=None, axs=None):
     '''
         TODO: update description
         A function which plots the residuals of the fit. An optional axis can be passed in
@@ -492,39 +553,52 @@ def plot_residuals(predictions, chronos_object=None, fig=None, gs_section=None):
     y_pred = predictions['yhat']
 
     y_residuals = y_true - y_pred
+    
 
     single_figure = False
     # Make sure to build a new figure if we don't have one
-    if (fig is None):
+    if (axs is None):
         single_figure = True
         fig = plt.figure(figsize=(15,5))
         gs = gridspec.GridSpec(1, 1, figure=fig)
-        gs_section = gs[0]
+        gs_section = gs[0, 0]
     
-    ax = fig.add_subplot(gs_section)
-    ax.set_title('Residuals', size=18)
-    #ax.set_xticks([], minor=True)
-    #ax.set_yticks([], minor=True)
-    ax.xaxis.set_ticks_position('none') 
-    ax.yaxis.set_ticks_position('none') 
-    ax.tick_params(labelbottom=False, labelleft=False)
+        axs = fig.add_subplot(gs[0, 0])
 
-    internal_gs_1 = gridspec.GridSpecFromSubplotSpec(1, 8, subplot_spec=gs_section, wspace=0.0)
-    axs = fig.add_subplot(internal_gs_1[0, :-1])
 
-    axs.scatter(x, y_residuals, c=prediction_color_, s=4)
-    axs.set_xlim(x.min(), x.max())
-    axs.set_xlabel('Date', size=18)
-    axs.set_ylabel('Residuals', size=18)
-    
-
-    axs = fig.add_subplot(internal_gs_1[0, -1])
-    axs.hist(y_residuals[y_residuals <= 0.0], color=overprediction_color_, bins=50, orientation="horizontal")#, ec="black")
-    axs.hist(y_residuals[y_residuals > 0.0], color=underperdiction_color_, bins=50, orientation="horizontal")#, ec="black")
+    # Make a fake plot just so the Residuals title is centered 
     axs.xaxis.set_ticks_position('none') 
     axs.yaxis.set_ticks_position('none') 
+    axs.set_title('Residuals', size=18)
     axs.tick_params(labelbottom=False, labelleft=False)
 
+    
+    
+    # Make a sub-axis to include a scatter plot
+    scatter_axis = inset_axes(axs, width="88%", height="100%", loc=6, borderpad=0.0)
+
+    # Only plot the observations where there are residuals
+    x_to_plot = x[~np.isnan(y_residuals)]
+    y_residuals_to_plot = y_residuals[~np.isnan(y_residuals)]
+
+    scatter_axis.scatter(x_to_plot, y_residuals_to_plot, c=prediction_color_, s=4)
+    scatter_axis.set_xlim(x_to_plot.min(), x_to_plot.max())
+    scatter_axis.set_xlabel('Date', size=18)
+    scatter_axis.set_ylabel('Residuals', size=18)
+
+    # Make another sub-axis to include a histogram
+    hist_axis = inset_axes(axs, width="12%", height="100%", loc=7, borderpad=0.0)
+
+    # Overprediction and underprediction will be in different colors so they are visually easy to tell apart
+    hist_axis.hist(y_residuals[y_residuals <= 0.0], color=overprediction_color_, bins=50, orientation="horizontal")
+    hist_axis.hist(y_residuals[y_residuals > 0.0], color=underperdiction_color_, bins=50, orientation="horizontal")
+
+    # No need for tik marks on these axes
+    hist_axis.xaxis.set_ticks_position('none') 
+    hist_axis.yaxis.set_ticks_position('none') 
+    hist_axis.tick_params(labelbottom=False, labelleft=False)
+
+    
     if (single_figure):
         plt.show()
         return fig

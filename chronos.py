@@ -29,7 +29,7 @@ pyro.enable_validation(True)
 
 class Chronos:
     '''
-            
+
 
         Parameters:
         ------------
@@ -49,85 +49,99 @@ class Chronos:
 
                                     Default is 20
 
-        year_seasonality_order -    [int] The fourier order used to predict yearly seasonality. Must be 
-                                    0 or larger. Larger values will allow for a better fit for yearly 
-                                    seasonality but increase the odds of overfitting, as well as
-                                    fitting time. Setting this value to 0 implies there is no yearly
-                                    seasonality.
+        year_seasonality_order -    [int] The fourier order used to predict yearly 
+                                    seasonality. Must be 0 or larger. Larger values will 
+                                    allow for a better fit for yearly seasonality but 
+                                    increase the odds of overfitting, as well as fitting
+                                    time. Setting this value to 0 implies there is no 
+                                    yearly seasonality.
 
                                     Default is 10
 
-        month_seasonality_order -   [int] The fourier order used to predict monthly seasonality. Must be 
-                                    0 or larger. Larger values will allow for a better fit for monthly 
-                                    seasonality but increase the odds of overfitting, as well as
-                                    fitting time. Setting this value to 0 implies there is no monthly
-                                    seasonality.
+        month_seasonality_order -   [int] The fourier order used to predict monthly
+                                    seasonality. Must be  0 or larger. Larger values
+                                    will allow for a better fit for monthly seasonality
+                                    but increase the odds of overfitting, as well as 
+                                    fitting time. Setting this value to 0 implies there
+                                    is no monthly seasonality.
 
                                     Default is 5
 
-        weekly_seasonality_order -  [int] The fourier order used to predict weekly seasonality. Must be 
-                                    0 or larger. Larger values will allow for a better fit for weekly 
-                                    seasonality but increase the odds of overfitting, as well as
-                                    fitting time. Setting this value to 0 implies there is no weekly
-                                    seasonality.
+        weekly_seasonality_order -  [int] The fourier order used to predict weekly
+                                    seasonality. Must be 0 or larger. Larger values will
+                                    allow for a better fit for weekly seasonality but
+                                    increase the odds of overfitting, as well as fitting 
+                                    time. Setting this value to 0 implies there is no 
+                                    weekly seasonality.
 
                                     Default is 3
 
-        learning_rate -             [float] The learning rate used for optimization when the optimization
-                                    method is "MAP" or "MLE". Most be larger than 0.
-                                    Larger values make the algorithm learn faster but might produce worse 
-                                    solutions. Smaller values allow for better convergence but will require 
+        learning_rate -             [float] The learning rate used for optimization when
+                                    the optimization method is "MAP" or "MLE". Most be 
+                                    larger than 0. Larger values make the algorithm learn
+                                    faster but might produce worse solutions. Smaller
+                                    values allow for better convergence but will require
                                     more iterations to be specified at [max_iter].
 
                                     Default is 0.01
 
-        changepoint_range -         [float] The range of the historical data to apply changepoints to. 
-                                    Must be between 0.0 - 1.0. 0.8 would mean only considering changepoints
-                                    for the first 80% of historical data. Larger values would provide better
-                                    fit, but would also be more sensitive to recent changes which may
-                                    or may not indicate trends.
+        changepoint_range -         [float] The range of the historical data to apply
+                                    changepoints to. Must be between 0.0 - 1.0. 0.8 
+                                    would mean only considering changepoints for the 
+                                    first 80% of historical data. Larger values would 
+                                    provide better fit, but would also be more 
+                                    sensitive to recent changes which may or may not 
+                                    indicate trends.
 
                                     Default is 0.8
 
-        changepoint_prior_scale -   [float] the scale for the changepoint value prior distribution.
-                                    Must be larger than 0.0. The changepoints are assumed to come from
-                                    a Laplace distribution which is centered at 0 and is specified by 
-                                    the scale value. Larger values for the scale allow for more changepoints
-                                    with larger changes, and may increase fit, but will also increase the
+        changepoint_prior_scale -   [float] the scale for the changepoint value
+                                    prior distribution. Must be larger than 0.0. The 
+                                    changepoints are assumed to come from a Laplace 
+                                    distribution which is centered at 0 and is specified
+                                    by the scale value. Larger values for the scale 
+                                    allow for more changepoints with larger changes, and
+                                    may increase fit, but will also increase the 
                                     uncertainty in future predictions.
                                     
                                     Default is 0.05
 
-        distribution -              [string] The distribution which describes the behaviour of the data
-                                    (mainly of the residuals) at each timestamp. Supported distributions
-                                    are:
+        distribution -              [string] The distribution which describes the 
+                                    behaviour of the data (mainly of the residuals) 
+                                    at each timestamp. Supported distributions are:
 
                                     "Normal"    - The normal (Guassian) distribution
-                                    "StudentT"  - Student's t-distribution. Unlike the normal distribution it
-                                                  has fatter tails, so can be more resistent to outliers
-                                    "Gamma"     - The gamma distribution. Only has support for positive values.
+                                    "StudentT"  - Student's t-distribution. Unlike the 
+                                                  normal distribution it has fatter 
+                                                  tails, so can be more resistent to 
+                                                  outliers
+                                    "Gamma"     - The gamma distribution. Only has 
+                                                  support for positive values.
 
                                     Default is "Normal"
 
-        seasonality_mode -          [string] Whether seasonality is an additive quantity ("add") or a 
-                                    multiplicative one ("mul").
-                                    If seasonality is specified as "add", the seasonal components are
-                                    added to the trend. For example, if every Saturday you see 5 additional
-                                    clients, that seasonal component is additive.
-                                    If the seasonality is specified as "mul", the seasonal components
-                                    are multiplied by the trend. For example, if every Saturday you see
-                                    a 50% increase in clients, that seasonal component is multiplicative 
-                                    as it depends on the number of clients already expected.
+        seasonality_mode -          [string] Whether seasonality is an additive quantity
+                                    ("add") or a multiplicative one ("mul"). If 
+                                    seasonality is specified as "add", the seasonal 
+                                    components are added to the trend. For example, if 
+                                    every Saturday you see 5 additiona clients, that 
+                                    seasonal component is additive. If the seasonality 
+                                    is specified as "mul", the seasonal components are 
+                                    multiplied by the trend. For example, if every 
+                                    Saturday you see a 50% increase in clients, that 
+                                    seasonal component is multiplicative as it depends 
+                                    on the number of clients already expected.
 
                                     Default is "add"
 
-        max_iter -                  [int] The maximum number of iterations the algorithm is allowed to 
-                                    run for. Must be larger than 0.
-                                    Chronos employes an optimization based approach for the "MAP" and
-                                    "MLE" method, and this parameter determines how long the optimization
-                                    algorithm can run for. Larger values will increase run-time, but will
-                                    lead to better results. Smaller learning_rate values require
-                                    larger max_iter values.
+        max_iter -                  [int] The maximum number of iterations the algorithm 
+                                    is allowed to run for. Must be larger than 0. Chronos 
+                                    employes an optimization based approach for the "MAP" 
+                                    and "MLE" method, and this parameter determines how 
+                                    long the optimization algorithm can run for. Larger 
+                                    values will increase run-time, but will lead to better
+                                    results. Smaller learning_rate values require larger 
+                                    max_iter values.
 
                                     Default is 1000.
 
@@ -140,8 +154,11 @@ class Chronos:
         >>> import chronos_plotting
         >>> from chronos import Chronos
 
-        >>> my_df = pd.DataFrame({"ds": pd.date_range(start="2016-01-01", periods=365*4, freq='d'),
-                                  "y": 0.01*np.array(range(365*4)) + np.sin(np.array(range(365*4))/30)})
+        >>> x = np.array(range(365*4))
+        >>> my_df = pd.DataFrame({"ds": pd.date_range(start="2016-01-01", 
+                                                      periods=365*4, 
+                                                      freq='d'),
+                                  "y": 0.01 * x + np.sin(x/30)})
         >>> print(my_df.head())
                   ds         y
         0 2016-01-01  0.000000
@@ -177,7 +194,8 @@ class Chronos:
                  max_iter=1000):
 
         '''
-            The initialization function. See class docstring for an in-depth explanation of all parameters
+            The initialization function. See class docstring for an in-depth explanation
+            of all parameters
         '''
 
         
@@ -229,9 +247,9 @@ class Chronos:
 
             Parameters:
             ------------
-            data -          The dataframe with the raw data. Must contain at least one column 
-                            with the timestamp (with dtype np.datetime64). It can optionally
-                            also contain the target column
+            data -          The dataframe with the raw data. Must contain at least one
+                            column with the timestamp (with dtype np.datetime64). It can
+                            optionally also contain the target column
 
             
             Returns:
@@ -348,23 +366,27 @@ class Chronos:
 
             changepoint_num -   The number of changepoints to find
 
-            changepoint_range - The range of the available times to consider. A value between 0.0
-                                and 1.0. 0.8 means only the first 80% of the range is considered
+            changepoint_range - The range of the available times to consider. A value
+                                between 0.0 and 1.0. 0.8 means only the first 80% of 
+                                the range is considered
 
             min_value -         The timepoint which describes the beginning of the range
-                                where changepoints can be found. Default is None, which means
-                                the first measurement sets the beginning of the range
+                                where changepoints can be found. Default is None, which
+                                means the first measurement sets the beginning of the 
+                                range
 
-            drop_first -        Whether to drop the first measurement found. When True, this 
-                                prevents from the first measurement of being considered as 
-                                a changepoint (we don't want the first second to be a changepoint usually)
+            drop_first -        Whether to drop the first measurement found. When True, 
+                                this prevents from the first measurement of being
+                                considered as a changepoint (we don't want the first
+                                second to be a changepoint usually)
 
             Returns:
             ------------
-            changepoints -      A tensor of shape (changepoint_num, ) where each entry is a day
-                                where a changepoint can happen. The changepoints are chosen
-                                to be evenly spaced based on the DATE RANGE, not the number
-                                of samples, in case samples are unevenly spaced.
+            changepoints -      A tensor of shape (changepoint_num, ) where each entry 
+                                is a day where a changepoint can happen. The changepoints 
+                                are chosen to be evenly spaced based on the DATE RANGE, 
+                                not the number of samples, in case samples are unevenly 
+                                spaced.
         '''
         
         # Set the minimum value in case it is None
@@ -433,20 +455,24 @@ class Chronos:
     ########################################################################################################################
     def fit(self, data, time_col = "ds", target_col="y"):
         '''
-            A function which performs fitting of the required method on the data provided, and thus estimates
-            the parameters of this model.
+            A function which performs fitting of the required method on the data provided,
+            and thus estimates the parameters of this model.
 
 
             Parameters:
             ------------
-            data -          [DataFrame] A pandas dataframe with at least two columns. One specifying the timestamp,
-                            and one specifying the target value (the time series observations). 
-                            The default expected column names are 'ds' and 'y' but can be set to other names.
+            data -          [DataFrame] A pandas dataframe with at least two columns. One
+                            specifying the timestamp, and one specifying the target value 
+                            (the time series observations). The default expected column 
+                            names are 'ds' and 'y' but can be set to other names.
 
             time_col -      [str] A string denoting the name of the timestamp column.
+                            
                             Default is 'ds'
 
-            target_col -    [str] A string denoting the name of the time series observation column.
+            target_col -    [str] A string denoting the name of the time series 
+                            observation column.
+                            
                             Default is 'y'
 
             
@@ -642,9 +668,10 @@ class Chronos:
         '''
             NOTE: DEPRECATE FUNCTION
 
-            A function which accepts a changepoint matrix, and a changepoint rate change tensor
-            and adds compares their sizes. If the matrix A specifies more changepoints than
-            deltas, new changepoint values are added to deltas. Otherwise deltas is unchanged
+            A function which accepts a changepoint matrix, and a changepoint rate change 
+            tensor and adds compares their sizes. If the matrix A specifies more 
+            changepoints than deltas, new changepoint values are added to deltas. 
+            Otherwise deltas is unchanged
 
             The additions to deltas are randomly drawn from a Laplace distribution since
             they are simulations of potential future changepoints, and thus are not fixed.
@@ -655,16 +682,17 @@ class Chronos:
                                 which changepoints occured
 
             deltas -            A 1D tensor specifying the increase, or decrease, in slope
-                                at each changepoint. The size is (S, ) where S is the number
-                                of changepoints
+                                at each changepoint. The size is (S, ) where S is the 
+                                number of changepoints
             
 
             
             Returns:
             ------------
-            deltas -            A new 1D tensor which contains the increase, or decrease, in slope
-                                for both past and future changepoints. If A is the same size
-                                as deltas coming in, the deltas tensor is unchanged
+            deltas -            A new 1D tensor which contains the increase, or decrease, 
+                                in slope for both past and future changepoints. If A is 
+                                the same size as deltas coming in, the deltas tensor 
+                                is unchanged
             
         '''
         if (A.shape[1] > deltas.shape[0]):
@@ -690,36 +718,38 @@ class Chronos:
     ########################################################################################################################
     def add_future_changepoints_(self, past_deltas, future_trend_period):
         '''
-            A function which accepts a changepoint matrix, and a changepoint rate change tensor
-            and adds compares their sizes. If the matrix A specifies more changepoints than
-            deltas, new changepoint values are added to deltas. Otherwise deltas is unchanged
+            A function which accepts a changepoint matrix, and a changepoint rate change 
+            tensor and adds compares their sizes. If the matrix A specifies more 
+            changepoints than deltas, new changepoint values are added to deltas. 
+            Otherwise deltas is unchanged
 
-            The additions to deltas are randomly drawn from a Laplace distribution since
+            The additions to deltas are randomly drawn from a Laplace distribution since 
             they are simulations of potential future changepoints, and thus are not fixed.
             Each run of this function is designed to be a single possible future.
 
             Parameters:
             ------------
-            A -                     [tensor] The changepoint matrix defining, for each time stamp,
-                                    which changepoints occured
+            A -                     [tensor] The changepoint matrix defining, for each time 
+                                    stamp, which changepoints occured
 
-            past_deltas -           [tensor] A 1D tensor specifying the increase, or decrease, in slope
-                                    at each changepoint. The size is (S, ) where S is the number
-                                    of changepoints
+            past_deltas -           [tensor] A 1D tensor specifying the increase, or 
+                                    decrease, in slope at each changepoint. The size is 
+                                    (S, ) where S is the number of changepoints
 
-            future_trend_period -   [int] The duration of the future trend, in seconds. This is the
-                                    number of seconds the future trend spans, not the number 
-                                    of observations (for example, there can be two 
-                                    observations, 15 seconds apart, so the period will
-                                    be 15 seconds)
+            future_trend_period -   [int] The duration of the future trend, in seconds. 
+                                    This is the number of seconds the future trend spans, 
+                                    not the number  of observations (for example, there 
+                                    can be two  observations, 15 seconds apart, so the 
+                                    period will be 15 seconds)
             
 
             
             Returns:
             ------------
-            deltas -                [tensor] A new 1D tensor which contains the increase, or decrease, in slope
-                                    for both past and future changepoints. If A is the same size
-                                    as deltas coming in, the deltas tensor is unchanged
+            deltas -                [tensor] A new 1D tensor which contains the increase, 
+                                    or decrease, in slope for both past and future 
+                                    changepoints. If A is the same size as deltas coming 
+                                    in, the deltas tensor is unchanged
             
         '''
 
@@ -764,16 +794,16 @@ class Chronos:
             X_time -            [tensor] The time tensor specifying the time regressor
 
 
-            past_deltas -       [tensor] A 1D tensor specifying the increase, or decrease, in slope
-                                at each changepoint. The size is (S, ) where S is the number
-                                of changepoints in the past, and not for the entire duration
-                                of X_time
+            past_deltas -       [tensor] A 1D tensor specifying the increase, or decrease,
+                                in slope at each changepoint. The size is (S, ) where S 
+                                is the number of changepoints in the past, and not for 
+                                the entire duration of X_time
 
-            past_changepoints - [tensor] A tensor of timestamps, of when each changepoint occurs.
-                                Only accounts for changepoints in the past
+            past_changepoints - [tensor] A tensor of timestamps, of when each changepoint
+                                occurs. Only accounts for changepoints in the past
 
-            A -                 [tensor] The changepoint matrix defining, for each time stamp,
-                                which changepoints occured. 
+            A -                 [tensor] The changepoint matrix defining, for each time 
+                                stamp, which changepoints occured. 
                                 It may get recreated during the run, but since that is
                                 probabilistic it is provided in case it need not be
                                 modified
@@ -783,16 +813,18 @@ class Chronos:
             ------------
             A tuple of (deltas, combined_changepoints, A)
 
-            deltas -                [tensor] A 1D tensor of the rate adjustments for the entire time of
-                                    X_time.
+            deltas -                [tensor] A 1D tensor of the rate adjustments for the
+                                    entire time of X_time.
             
-            combined_changepoints - [tensor] A 1D Tensor specifing the times, where each changepoint
-                                    occurs. May be the same size as past_changepoints if no new
-                                    changepoints have been simulated
+            combined_changepoints - [tensor] A 1D Tensor specifing the times, where each 
+                                    changepoint occurs. May be the same size as 
+                                    past_changepoints if no new changepoints have been 
+                                    simulated
             
-            A -                     [tensor] A 2D Matrix which defines how changepoints relate to the trend.
-                                    May be different from the size provided when A is an input, but
-                                    may remain the same, in which case the input matrix is returned.
+            A -                     [tensor] A 2D Matrix which defines how changepoints 
+                                    relate to the trend. May be different from the size 
+                                    provided when A is an input, but may remain the same, 
+                                    in which case the input matrix is returned.
             
         '''  
         # Simulate potential changepoint generation We've scaled the history so the last timestamp
@@ -853,17 +885,19 @@ class Chronos:
             A -                 [tensor] The changepoint matrix defining, for each time stamp,
                                 which changepoints occured
 
-            deltas -            [tensor] A 1D tensor specifying the increase, or decrease, in slope
-                                at each changepoint. The size is (S, ) where S is the number
-                                of changepoints
+            deltas -            [tensor] A 1D tensor specifying the increase, or decrease, in 
+                                slope at each changepoint. The size is (S, ) where S is the 
+                                number of changepoints
 
 
-            changepoints -      [tensor] A tensor of timestamps, of when each changepoint occurs
+            changepoints -      [tensor] A tensor of timestamps, of when each changepoint 
+                                occurs
 
             
             Returns:
             ------------
-            trend -             [tensor] A 1D tensor of the trend, or growth, excluding any seasonalities
+            trend -             [tensor] A 1D tensor of the trend, or growth, excluding any 
+                                seasonalities
             
         '''   
 
@@ -881,9 +915,6 @@ class Chronos:
         # parameter store using the pyro.deterministic command
         trend = slope * X_time + intercept
 
-        #if (self.distribution_ == chronos_utils.Gamma_dist_code):
-        #    trend = torch.nn.functional.softplus(trend, beta=100)
-        #pyro.deterministic('trend', trend)
 
         return trend
 
@@ -927,21 +958,24 @@ class Chronos:
             
             X_time -        [tensor] The time tensor specifying the time regressor
 
-            X_seasonality - [tensor] The seasonality tensor specifying all cyclical regressors
+            X_seasonality - [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             A -             [tensor] The changepoint matrix defining, for each time stamp,
                             which changepoints occured
 
-            changepoints -  [tensor] A tensor of timestamps, in days, of when each changepoint occurs
+            changepoints -  [tensor] A tensor of timestamps, in days, of when each 
+                            changepoint occurs
 
-            y -             [tensor] The target to predict, i.e. the time series measurements.
-                            If None, the model generates these observations instead.
+            y -             [tensor] The target to predict, i.e. the time series 
+                            measurements. If None, the model generates these 
+                            observations instead.
 
             
             Returns:
             ------------
-            mu -            [tensor] A tensor of the expected values to observe given the regressor
-                            tensors and changepoints
+            mu -            [tensor] A tensor of the expected values to observe given
+                            the regressor tensors and changepoints
             
         '''   
         
@@ -1001,15 +1035,18 @@ class Chronos:
             
             X_time -        [tensor] The time tensor specifying the time regressor
 
-            X_seasonality - [tensor] The seasonality tensor specifying all cyclical regressors
+            X_seasonality - [tensor] The seasonality tensor specifying all 
+                            cyclical regressors
 
             A -             [tensor] The changepoint matrix defining, for each time stamp,
                             which changepoints occured
 
-            changepoints -  [tensor] A tensor of timestamps, in days, of when each changepoint occurs
+            changepoints -  [tensor] A tensor of timestamps, in days, of when each 
+                            changepoint occurs
 
-            y -             [tensor] The target to predict, i.e. the time series measurements.
-                            If None, the model generates these observations instead.
+            y -             [tensor] The target to predict, i.e. the time series 
+                            measurements. If None, the model generates these observations 
+                            instead.
 
             
             Returns:
@@ -1032,7 +1069,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             turn_positive - [bool] Whether or not the resulting mean has to be positive
             
@@ -1084,7 +1122,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1130,7 +1169,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1173,7 +1213,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1224,7 +1265,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1276,7 +1318,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1317,7 +1360,8 @@ class Chronos:
             trend -         [tensor] The trend regressor specifying the trend observed
                             excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical regressors
+            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             y -             [tensor] The observed values
             
@@ -1351,7 +1395,8 @@ class Chronos:
             
             X_time -        [tensor] The time tensor specifying the time regressor
 
-            X_seasonality - [tensor] The seasonality tensor specifying all cyclical regressors
+            X_seasonality - [tensor] The seasonality tensor specifying all cyclical 
+                            regressors
 
             A -             [tensor] The changepoint matrix defining, for each time stamp,
                             which changepoints occured. If the function is run in
@@ -1360,16 +1405,18 @@ class Chronos:
                             is non-deterministic, the matrix is provided for
                             the cases where it won't have to be recreated.
 
-            changepoints -  [tensor] A tensor of timestamps of when each changepoint occurs
+            changepoints -  [tensor] A tensor of timestamps of when each changepoint 
+                            occurs
 
-            y -             [tensor] The target to predict, i.e. the time series measurements.
-                            If None, the model generates these observations instead.
+            y -             [tensor] The target to predict, i.e. the time series 
+                            measurements. If None, the model generates these observations
+                            instead.
 
             
             Returns:
             ------------
-            mu -            [tensor] A tensor of the expected values to observe given the regressor
-                            tensors and changepoints
+            mu -            [tensor] A tensor of the expected values to observe given the 
+                            regressor tensors and changepoints
             
         '''
         
@@ -1429,32 +1476,34 @@ class Chronos:
             A function which accepts a dataframe with at least one column, the timestamp
             and employes the learned parameters to predict observations as well as 
             credibility intervals and uncertainty intervals.
-            Alternatively, the function can accept the parameters accepted by .make_future_dataframe
-            and produce the future dataframe internally.
+            Alternatively, the function can accept the parameters accepted by 
+            .make_future_dataframe and produce the future dataframe internally.
             Returns a dataframe with predictions for observations, upper and lower limits
             for credibility intervals, trend, and upper and lower limits on trend 
             uncertainty.
 
             Parameters:
             ------------
-            future_df -         [DataFrame] The dataframe. Must at least have a single column of timestamp
-                                with the same name as the training dataframe. If data is not
-                                provided, period, frequency, and include_history must be
-                                provided. If data is provided, period, frequency, and include_history
-                                are ignored
+            future_df -         [DataFrame] The dataframe. Must at least have a single 
+                                column of timestamp with the same name as the training 
+                                dataframe. If data is not provided, period, frequency, 
+                                and include_history must be provided. If data is 
+                                provided, period, frequency, and include_history are 
+                                ignored
 
                                 Default is None
 
-            sample_number -     [int] The number of posterior samples to generate in order to
-                                draw the uncertainty intervals and credibility intervals.
-                                Larger values give more accurate results, but also take
-                                longer to run. 
+            sample_number -     [int] The number of posterior samples to generate in 
+                                order to draw the uncertainty intervals and credibility
+                                intervals. Larger values give more accurate results, 
+                                but also take longer to run. 
                                 
                                 Default 1000
 
-            ci_interval -       [float] The credibility interval range to generate. Must be
-                                between 0.0 and 1.0, 0.95 generates a range such that 95% 
-                                of all observations fall within this range. 
+            ci_interval -       [float] The credibility interval range to generate. 
+                                Must be between 0.0 and 1.0, 0.95 generates a range 
+                                such that 95%  of all observations fall within this 
+                                range. 
                                 
                                 Default is 0.95.
 
@@ -1472,8 +1521,8 @@ class Chronos:
 
                                 Default is 'D'
 
-            incldue_history -   [bool] A boolean describing whether to include history
-                                observations or not used by the fit method.
+            incldue_history -   [bool] A boolean describing whether to include 
+                                history observations or not used by the fit method.
 
                                 Default is True
             
@@ -1483,16 +1532,20 @@ class Chronos:
             ------------
             predictions -       [DataFrame] A dataframe with:
                                 [time_col] -    The time column fed into this method
-                                [target_col] -  The name for the original target column if history is included in the dataframe
+                                [target_col] -  The name for the original target 
+                                                column if history is included in the dataframe
                                 yhat -          The predicted value for observations
-                                yhat_upper -    The upper value for uncertainty + credibility interval
-                                yhat_lower -    The lower value for uncertainty + credibility interval
-                                trend -         The predicted value for the trend, excluding seasonality
+                                yhat_upper -    The upper value for uncertainty 
+                                                + credibility interval
+                                yhat_lower -    The lower value for uncertainty 
+                                                + credibility interval
+                                trend -         The predicted value for the trend, 
+                                                excluding seasonality
                                 trend_upper -   The upper value for trend uncertainty
                                 trend_lower -   The lower value for trend uncertainty
 
-                                Seasonality is not returned in the dataframe, but is incorporated when
-                                computing yhat.
+                                Seasonality is not returned in the dataframe, but is 
+                                incorporated when computing yhat.
             
         '''
         self.prediction_verbose_ = verbose
@@ -1578,12 +1631,12 @@ class Chronos:
         '''
             A function which takes in a future range specified by the period and the
             frequency and returns a dataframe which can be used by the predict method.
-            By default, the history is included as well for easy diagnostics via the plotting 
-            methods.
+            By default, the history is included as well for easy diagnostics via the 
+            plotting  methods.
 
-            NOTE: You should only use this method if you plan on adding additional custom
-            regressors. If there are no custom regressors involved you can use the 
-            .predict method directly
+            NOTE: You should only use this method if you plan on adding additional 
+            custom regressors. If there are no custom regressors involved you can 
+            use the .predict method directly
 
             Parameters:
             ------------
@@ -1609,7 +1662,7 @@ class Chronos:
             
             Returns:
             ------------
-            future_df -         [DataFrame] A dataframe with a datestamp column, and a 
+            future_df -         [DataFrame] A dataframe with a datestamp column, and a
                                 target column ready to be used by the 
                                 predict method. The datestamp and target
                                 column names are the same as the ones
@@ -1689,8 +1742,8 @@ class Chronos:
     ########################################################################################################################
     def get_seasonality(self, seasonality_name):
         '''
-            A function which returns a tensor denoting the seasonality requested. If a method not in
-            [MAP, MLE] is requested, the function throws an error
+            A function which returns a tensor denoting the seasonality requested. If a 
+            method not in [MAP, MLE] is requested, the function throws an error
 
             Parameters:
             ------------
@@ -1700,7 +1753,8 @@ class Chronos:
             
             Returns:
             ------------
-            seasonality -       [DataFrame] A pandas dataframe of the requested seasonality
+            seasonality -       [DataFrame] A pandas dataframe of the requested 
+                                seasonality
             
         '''
         if (self.method_ in ["MAP", "MLE"]):
@@ -1769,13 +1823,14 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            [str] The name of the pyro parameter store where the point
-                                    estimates are stored
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
                                     
                                     X -     The values for the weekly seasonality (0-6)
                                     Label - The labels for the days ("Monday" - "Sunday")
@@ -1810,13 +1865,14 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            [str] The name of the pyro parameter store where the point
-                                    estimates are stored
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
                                     
                                     X -     The values for the monthly seasonality (0-30)
                                     Label - The labels for the days ("1st" - "31st")
@@ -1848,15 +1904,17 @@ class Chronos:
 
             Parameters:
             ------------
-            param_name -            [str] The name of the pyro parameter store where the point
-                                    estimates are stored
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
 
             
             Returns:
             ------------
-            weekly_seasonality -    [DataFrame] A pandas dataframe containing three columns:
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
                                     
-                                    X -     The values for the yearly seasonality days (0-366)
+                                    X -     The values for the yearly seasonality 
+                                            days (0-366)
                                     Label - The labels for the days (the individual dates)
                                     Y -     The seasonal response for each day
         '''
