@@ -1109,8 +1109,9 @@ class Chronos:
         pass
     
     ########################################################################################################################
-    def compute_mu_(self, trend, seasonality, turn_positive=False):
+    def compute_mu_(self, trend, seasonality, multiplicative_regressors, additive_regressors, turn_positive=False):
         '''
+            TODO: update
             A function which takes up the trend and seasonalities and processes
             them into the expected values tensor, mu.
             If required, ensures both trend and mu are positive.
@@ -1140,26 +1141,47 @@ class Chronos:
         # predicting
         pyro.deterministic('trend', trend)
 
-        # check combine the trend and seasonality based on the
+        # We need to first apply multipication on the base trend, then
+        # perform addition. So first we apply all multiplicative operations
+        mu = trend
+        if (self.seasonality_mode_ == "mul"):
+            mu  = mu * seasonality
+        if (multiplicative_regressors.shape[0] > 0):
+            # Find the product of all multiplicative regressors
+            # (e.g. reg1 * reg2 * reg3) and multiply the
+            # result by mu
+            mu = mu * torch.prod(multiplicative_regressors, dim=1)
+
+
+        # Then all additive operations
+        if (self.seasonality_mode_ == "add"):
+            mu = mu + seasonality
+        if (additive_regressors.shape[0] > 0):
+            # The additive regressors have all been added before
+            # using an efficient dot product operation
+            mu = mu + additive_regressors
+        
+        
+
+        '''# check combine the trend and seasonality based on the
         # seasonality mode
         if (self.seasonality_mode_ == "add"):
             linear_combo = trend + seasonality
         elif (self.seasonality_mode_ == "mul"):
-            linear_combo = trend * seasonality 
+            linear_combo = trend * seasonality '''
 
         # Finally ensure the addition of seasonality does not interfere
         # with the observed data being positive
         if (turn_positive == True):
-            linear_combo = torch.nn.functional.softplus(linear_combo, beta=100)
-            mu = linear_combo + torch.finfo(torch.float32).eps
-        else:
-            mu = linear_combo
+            mu = torch.nn.functional.softplus(mu, beta=100)
+            mu = mu + torch.finfo(torch.float32).ep
 
         return mu
     
     ########################################################################################################################
-    def predict_normal_likelihood_(self, method, trend, seasonality, y):
+    def predict_normal_likelihood_(self, method, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
+            TODO: update
             A function which takes up the trend and seasonalities and combines
             them to specify a normal distribution, conditioned on the observed
             data.
@@ -1186,7 +1208,7 @@ class Chronos:
         '''
 
         # Compute expected values
-        mu = self.compute_mu_(trend, seasonality)
+        mu = self.compute_mu_(trend, seasonality, multiplicative_regressors, additive_regressors)
         
         # Define additional paramters specifying the likelihood
         # distribution. 
@@ -1396,8 +1418,9 @@ class Chronos:
 
         return mu
     ########################################################################################################################    
-    def predict_likelihood_(self, method, distribution, trend, seasonality, y):
+    def predict_likelihood_(self, method, distribution, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
+            TODO: update
             A function which takes up the trend and seasonalities and combines
             them to form the expected values, then conditions them
             on the observed data based on the distribution requested
@@ -1424,15 +1447,15 @@ class Chronos:
         '''
 
         if (distribution == chronos_utils.Normal_dist_code):
-            return self.predict_normal_likelihood_(method, trend, seasonality, y)
+            return self.predict_normal_likelihood_(method, trend, seasonality, multiplicative_regressors, additive_regressors, y)
         elif (distribution == chronos_utils.StudentT_dist_code):
-            return self.predict_studentT_likelihood_(method, trend, seasonality, y)
+            return self.predict_studentT_likelihood_(method, trend, seasonality, multiplicative_regressors, additive_regressors, y)
         elif (distribution == chronos_utils.Gamma_dist_code):
-            return self.predict_gamma_likelihood_(method, trend, seasonality, y)
+            return self.predict_gamma_likelihood_(method, trend, seasonality, multiplicative_regressors, additive_regressors, y)
         elif (distribution == chronos_utils.Poisson_dist_code):
-            return self.predict_poisson_likelihood_(method, trend, seasonality, y)
+            return self.predict_poisson_likelihood_(method, trend, seasonality, multiplicative_regressors, additive_regressors, y)
         elif (distribution == chronos_utils.HalfNormal_dist_code):
-            return self.predict_halfnormal_likelihood_(method, trend, seasonality, y)
+            return self.predict_halfnormal_likelihood_(method, trend, seasonality, multiplicative_regressors, additive_regressors, y)
         
     ########################################################################################################################    
     def model_MAP_(self, X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, A, changepoints, y=None):
@@ -1510,8 +1533,42 @@ class Chronos:
 
         seasonality = self.build_seasonality_(seasonality)
 
+        # Compute coefficients for the additive regressors
+        betas_additive_regressors = pyro.sample("betas_add_regressors", 
+                                                dist.Normal(torch.zeros(X_additive_regressors.size(1)), 
+                                                            torch.full((X_additive_regressors.size(1),), 10.0)).to_event(1))
+
+        additive_regressors = X_additive_regressors.matmul(betas_additive_regressors)
+
+
+        # Compute coefficients for the multiplicative regressors
+        betas_multiplicative_regressors = pyro.sample("betas_mul_regressors", 
+                                                      dist.Normal(torch.zeros(X_multiplicative_regressors.size(1)), 
+                                                                  torch.full((X_multiplicative_regressors.size(1),), 10.0)).to_event(1))
+
+        
+        # Notice we don't do a matrix-vector product here, but rather an 
+        # row-wise multipication. The reason is we want to then find a cumulative
+        # product of all multiplicative regressors.
+        # i.e. if I have regressors reg1, reg2, and reg3, I want to multiply the trend
+        # by (reg1 * reg2 * reg3) rather than by (reg1 + reg2 + reg3)
+        multiplicative_regressors = X_multiplicative_regressors * betas_multiplicative_regressors
+
+        # The multiplicative regressors have to be adjusted so that they are larger than 1
+        # when positive, and between 0.0 and 1.0 when negative so that their multiplicative
+        # effect either dampens, or amplifies, the results, but never flips the sign
+        multiplicative_regressors = (1 + multiplicative_regressors) 
+
+
+
         # Sample observations based on the appropriate distribution
-        mu = self.predict_likelihood_("MAP", self.distribution_, trend, seasonality, y)
+        mu = self.predict_likelihood_("MAP", 
+                                      self.distribution_, 
+                                      trend, 
+                                      seasonality, 
+                                      multiplicative_regressors, 
+                                      additive_regressors, 
+                                      y)
 
         return mu
     

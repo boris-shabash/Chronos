@@ -60,6 +60,40 @@ def test_incorrect_method_specification():
         my_chronos = Chronos(method=None)
 
 ######################################################################
+def test_predictions_with_additional_regressors(sample_data):
+    '''
+        TODO: update
+    '''
+    
+    my_chronos = Chronos(n_changepoints=0, max_iter=100)
+    my_chronos.add_regressors("reg1", "mul")
+    my_chronos.add_regressors("reg2", "mul")
+    
+    # Check not including the regressor throws an error
+    with pytest.raises(KeyError):
+        my_chronos.fit(sample_data)
+    
+    # Now check with the regressor
+    sample_data['reg1'] = [1] * sample_data.shape[0]    
+    sample_data['reg2'] = [1] * sample_data.shape[0]    
+    my_chronos.fit(sample_data)
+
+    future_df = my_chronos.make_future_dataframe(include_history=False)
+
+    # Check not including the regressor throws an error
+    with pytest.raises(KeyError):
+        predictions = my_chronos.predict(future_df)
+
+    # Now check with the regressor
+    future_df['reg1'] = [1] * future_df.shape[0]
+    future_df['reg2'] = [1] * future_df.shape[0]    
+    predictions = my_chronos.predict(future_df)
+
+    predictions.drop('y', axis=1, inplace=True)    
+
+    assert(predictions.isna().sum().sum() == 0)
+
+######################################################################
 def test_predictions_not_nan(sample_data):
     '''
         Make sure no nans are returned during the prediction process
@@ -76,36 +110,7 @@ def test_predictions_not_nan(sample_data):
 
         assert(predictions.isna().sum().sum() == 0)
 
-######################################################################
-def test_predictions_with_additional_regressors(sample_data):
-    '''
-        TODO: update
-    '''
-    
-    my_chronos = Chronos(n_changepoints=0, max_iter=100)
-    my_chronos.add_regressors("reg1", "add")
-    
-    # Check not including the regressor throws an error
-    with pytest.raises(KeyError):
-        my_chronos.fit(sample_data)
-    
-    # Now check with the regressor
-    sample_data['reg1'] = [1] * sample_data.shape[0]    
-    my_chronos.fit(sample_data)
 
-    future_df = my_chronos.make_future_dataframe(include_history=False)
-
-    # Check not including the regressor throws an error
-    with pytest.raises(KeyError):
-        predictions = my_chronos.predict(future_df)
-
-    # Now check with the regressor
-    future_df['reg1'] = [1] * future_df.shape[0]
-    predictions = my_chronos.predict(future_df)
-
-    predictions.drop('y', axis=1, inplace=True)    
-
-    assert(predictions.isna().sum().sum() == 0)
 
 ######################################################################
 def test_prediction_no_seasonality(sample_data):
