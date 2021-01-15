@@ -514,7 +514,6 @@ def plot_yearly_seasonality(chronos_object, axs=None):
 ########################################################################################################################
 def plot_residuals(predictions, chronos_object=None, axs=None):
     '''
-        TODO: update description
         A function which plots the residuals of the fit. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
@@ -522,22 +521,32 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
 
         Parameters:
         ------------
-        x -         A 1D tensor or array containg the timestamp measurements for the time
-                    series
+        predictions -       [DataFrame] A pandas dataframe returned from the .predict 
+                            method of  this Chronos object. The dataframe is expected
+                            to have the same columns as the dataframe used for fitting
+                            as well as the following columns: 
+                            yhat, yhat_upper, yhat_lower, trend, trend_upper, 
+                            trend_lower
 
-        y_true -    A 1D tensor or array containing the true observations for the time series
+        chronos_object -    [Chronos] A fitted chronos object that was used to 
+                            generate the predictions dataframe. If this object 
+                            is not provided assumptions are made about the 
+                            naming in the predictions dataframe.
 
-        y_pred -    A 1D tensor or array containing the values predicted by this Chronos object
+                            Default is None
 
+        axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
+                            drawing to take place on. If no axis is passed in as an 
+                            argument, a new figure is created and returned upon drawing.
 
-        axs -       Optional argument, a matplotlib subplot axis for the drawing to take place
-                    on.
+                            Default is None
 
         
         Returns:
         ------------
-        fig -       An optional return value. If no axis is passed in as an argument, a new
-                    figure is created and returned upon drawing.
+        fig -               [Figure] An optional return value. If no axis is passed in 
+                            as an argument, a new figure is created and returned upon 
+                            drawing.
     '''
     if (chronos_object is None):
         print("No Chronos object provided, assuming timestamp and target columns are named 'ds' and 'y'.")
@@ -604,6 +613,10 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
         return fig
 
 ########################################################################################################################
+########################################################################################################################
+########################################################################################################################
+########################################################################################################################
+# UNDER DEVELOPMENT
 """def get_seasonal_plotly_figure(self, seasonality_df):
     '''
 
