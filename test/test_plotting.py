@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Boris Shabash
 
 # This source code is licensed under the MIT license found in the
