@@ -20,7 +20,7 @@ Assuming you have a time series pandas dataframe named `ts_df` which looks as fo
 You can call Chronos as follows:
 
 ```python
-my_chronos = Chronos()
+>>> my_chronos = Chronos()
 >>> my_chronos.fit(ts_df)
 Employing Maximum A Posteriori
 100.0% - ELBO loss: -2.4531 | Mean Absolute Error: 0.2296   
