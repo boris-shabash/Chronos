@@ -20,6 +20,9 @@ Assuming you have a time series pandas dataframe named `ts_df` which looks as fo
 You can call Chronos as follows:
 
 ```python
+>>> from chronos import Chronos
+>>> import chronos_plotting
+>>>
 >>> my_chronos = Chronos()
 >>> my_chronos.fit(ts_df)
 Employing Maximum A Posteriori

@@ -131,7 +131,7 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
 
     # Optionally save the figure
     if (figure_name is not None):
-        plt.savefig(figure_name, dpi=96*4)#'''
+        plt.savefig(figure_name, dpi=96*2)#'''
     else:
         plt.show()
 
@@ -577,6 +577,7 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
     # Make a fake plot just so the Residuals title is centered 
     axs.xaxis.set_ticks_position('none') 
     axs.yaxis.set_ticks_position('none') 
+    axs.set_xlabel(' \n\n ', size=18)
     axs.set_title('Residuals', size=18)
     axs.tick_params(labelbottom=False, labelleft=False)
 
