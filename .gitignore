@@ -1,3 +1,4 @@
 *.png
+*.pyc
 data.csv
 data/data.csv
