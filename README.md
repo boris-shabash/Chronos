@@ -6,31 +6,42 @@ Simple time series prediction model. Implemented using <a href="https://pyro.ai/
 
 ## Simple Use Case
 
-Assuming you have a time series pandas dataframe named `ts_df` which looks as follows:
+With the files included, you can load the [Divvy bike daily](https://www.kaggle.com/yingwurenjian/chicago-divvy-bicycle-sharing-data?select=data.csv) data (the data has been aggregated since the original file is 2GB) as follows:
 
 ```python
-    ds         y
-0 2016-01-01  0.000000
-1 2016-01-02  0.043327
-2 2016-01-03  0.086617
-3 2016-01-04  0.129833
-4 2016-01-05  0.172939
+import pandas as pd
+import numpy as np
+
+divvy_data = pd.read_csv('data/divvy_daily_rides.csv')
+divvy_data['ds'] = pd.to_datetime(divvy_data['ds'])
+print(divvy_data.head())
+```
+```
+          ds          y
+0 2014-01-01  105421324
+1 2014-01-02  123221770
+2 2014-01-03    6662107
+3 2014-01-04  201035389
+4 2014-01-05   35549270
 ```
 
 You can call Chronos as follows:
 
 ```python
 >>> from chronos import Chronos
->>> import chronos_plotting
+>>> from chronos import chronos_plotting
 >>>
->>> my_chronos = Chronos()
->>> my_chronos.fit(ts_df)
+>>> my_chronos = Chronos(seasonality_mode="mul", distribution="Gamma")
+>>> my_chronos.fit(divvy_data)
 Employing Maximum A Posteriori
-100.0% - ELBO loss: -2.4531 | Mean Absolute Error: 0.2296   
+100.0% - ELBO loss: -1.5903 | Mean Absolute Error: 11152849920.0000
 
->>> predictions = my_chronos.predict(period=31)
+>>> predictions = my_chronos.predict(period=365)
 Prediction no: 1000
 >>> chronos_plotting.plot_components(predictions, my_chronos)
 ```
 
 ![alt text](images/Divvy_components.png)
+
+Notice we can specify the distribution of the ride shares to be a gamma distribution to ensure they are never negative. Additionally, we made the seasonality multiplicative to make sure that its affect increases as the absolute number of
+rides increases.

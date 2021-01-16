@@ -605,6 +605,8 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
     # No need for tik marks on these axes
     hist_axis.xaxis.set_ticks_position('none') 
     hist_axis.yaxis.set_ticks_position('none') 
+    hist_axis.set_yticklabels([])
+    hist_axis.set_xticklabels([])
     hist_axis.tick_params(labelbottom=False, labelleft=False)
 
     
