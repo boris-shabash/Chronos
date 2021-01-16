@@ -1,5 +1,5 @@
 *.png
 *.pyc
-*-checkpoint.ipynb
+.ipynb_checkpoints/*
 data.csv
 data/data.csv
