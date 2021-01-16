@@ -3,13 +3,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import sys
-sys.path.append('../')
-sys.path.append('./')
 
 from chronos import Chronos
-import chronos_utils
+from chronos import chronos_utils
+
 import pytest
+
 import pandas as pd
 import numpy as np
 

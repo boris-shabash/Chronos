@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 
-import chronos_utils
+from chronos import chronos_utils
 import pandas as pd
 import numpy as np
 

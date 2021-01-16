@@ -3,14 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import sys
-sys.path.append('../')
-sys.path.append('./')
+import os
 
 from chronos import Chronos
-import chronos_utils
-import chronos_plotting
+from chronos import chronos_utils
+from chronos import chronos_plotting
+
 import pytest
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -53,6 +54,8 @@ def test_plotting(capsys, monkeypatch, sample_data):
         std_error = capsys.readouterr().err
         assert(std_error == "")
 
+    os.remove("test_prediction.png")
+
 ######################################################################
 def test_plotting_no_history(capsys, monkeypatch, sample_data):
     '''
@@ -78,3 +81,5 @@ def test_plotting_no_history(capsys, monkeypatch, sample_data):
 
         std_error = capsys.readouterr().err
         assert(std_error == "")
+
+    os.remove("test_prediction_no_history.png")
