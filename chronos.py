@@ -1074,8 +1074,37 @@ class Chronos:
         
         seasonality = self.__build_seasonality(seasonality)
 
+
+
+        # Compute coefficients for the additive regressors
+        betas_additive_regressors = pyro.param("betas_add_regressors", torch.rand(X_additive_regressors.size(1)))
+
+        additive_regressors = X_additive_regressors.matmul(betas_additive_regressors)
+
+
+        # Compute coefficients for the multiplicative regressors
+        betas_multiplicative_regressors = pyro.param("betas_mul_regressors", torch.rand(X_multiplicative_regressors.size(1)))
+
+        
+        # Notice we don't do a matrix-vector product here, but rather an 
+        # row-wise multipication. The reason is we want to then find a cumulative
+        # product of all multiplicative regressors.
+        # i.e. if I have regressors reg1, reg2, and reg3, I want to multiply the trend
+        # by (reg1 * reg2 * reg3) rather than by (reg1 + reg2 + reg3)
+        multiplicative_regressors = X_multiplicative_regressors * betas_multiplicative_regressors
+
+        # The multiplicative regressors have to be adjusted so that they are larger than 1
+        # when positive, and between 0.0 and 1.0 when negative so that their multiplicative
+        # effect either dampens, or amplifies, the results, but never flips the sign
+        multiplicative_regressors = (1 + multiplicative_regressors) 
+
         # Sample observations based on the appropriate distribution
-        mu = self.__predict_likelihood("MLE", self.__distribution, trend, seasonality, y)
+        mu = self.__predict_likelihood("MLE", 
+                                       self.__distribution, 
+                                       trend, seasonality, 
+                                       multiplicative_regressors, 
+                                       additive_regressors, 
+                                       y)
 
         return mu
 
@@ -1323,10 +1352,9 @@ class Chronos:
     ########################################################################################################################
     def __predict_studentT_likelihood(self, method, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
-            TODO: update
-            A function which takes up the trend and seasonalities and combines
-            them to specify a Student t-distribution, conditioned on the observed
-            data.
+            A function which takes up the trend, seasonalities, and additional regressors
+            and combines them to specify a Student t-distribution, conditioned on the 
+            observed data.
             Additional sigma (standard deviation), and df (degrees of freedom) 
             values are registered as either distributions or parameters 
             based on the method used
@@ -1387,10 +1415,9 @@ class Chronos:
     ########################################################################################################################
     def __predict_gamma_likelihood(self, method, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
-            TODO: update
-            A function which takes up the trend and seasonalities and combines
-            them to specify a gamma distribution, conditioned on the observed
-            data.
+            A function which takes up the trend, seasonalities, and additional regressors
+            and combines them to specify a gamma distribution, conditioned on the 
+            observed data.
             An additional rate value is registered as either a distribution 
             or a parameter based on the method used, and a shape tensor
             is computed based on the rate and mu.
@@ -1398,20 +1425,31 @@ class Chronos:
             Parameters:
             ------------
 
-            method -        [str] Which method is used
+            method -                    [str] Which method is used
             
-            trend -         [tensor] The trend regressor specifying the trend observed
-                            excluding seasonalities
+            trend -                     [tensor] The trend regressor specifying the trend
+                                        observed excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
-                            regressors
+            seasonality -               [tensor] The seasonality tensor specifying all 
+                                        cyclical regressors
 
-            y -             [tensor] The observed values
+            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+                                        be incorporated as multiplicative terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+            
+            additive_regressors -       [tesnor] A tensor of the regressors which will
+                                        be incorporated as additive terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+
+            y -                         [tensor] The observed values
             
             Returns:
             ------------
-            mu -            [tensor] The resulting expected value when combining trend
-                            and seasonality based on the seasonality mode
+            mu -                        [tensor] The resulting expected value when
+                                        combining trend and seasonality based on the
+                                        seasonality mode
         '''
         # Compute expected values
         mu = self.__compute_mu(trend, seasonality, multiplicative_regressors, additive_regressors, turn_positive=True)
@@ -1443,29 +1481,39 @@ class Chronos:
     ########################################################################################################################
     def __predict_poisson_likelihood(self, method, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
-            TODO: update
-            A function which takes up the trend and seasonalities and combines
-            them to specify a Poisson distribution, conditioned on the observed
-            data.
+            A function which takes up the trend, seasonalities, and additional regressors
+            and combines them to specify a Poisson distribution, conditioned on the 
+            observed data.
             A rate tensor is computed based on the expected values.
 
             Parameters:
             ------------
 
-            method -        [str] Which method is used
+            method -                    [str] Which method is used
             
-            trend -         [tensor] The trend regressor specifying the trend observed
-                            excluding seasonalities
+            trend -                     [tensor] The trend regressor specifying the
+                                        trend observed excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
-                            regressors
+            seasonality -               [tensor] The seasonality tensor specifying all
+                                        cyclical regressors
 
-            y -             [tensor] The observed values
+            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+                                        be incorporated as multiplicative terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+            
+            additive_regressors -       [tesnor] A tensor of the regressors which will
+                                        be incorporated as additive terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+
+            y -                         [tensor] The observed values
             
             Returns:
             ------------
-            mu -            [tensor] The resulting expected value when combining trend
-                            and seasonality based on the seasonality mode
+            mu -                        [tensor] The resulting expected value when
+                                        combining trend and seasonality based on the 
+                                        seasonality mode
         '''
 
         # Compute expected values
@@ -1485,30 +1533,41 @@ class Chronos:
     ########################################################################################################################    
     def __predict_likelihood(self, method, distribution, trend, seasonality, multiplicative_regressors, additive_regressors, y):
         '''
-            TODO: update
-            A function which takes up the trend and seasonalities and combines
-            them to form the expected values, then conditions them
+            A function which takes up the trend, seasonalities, and additional regressors
+            and combines them to form the expected values, then conditions them
             on the observed data based on the distribution requested
 
             Parameters:
             ------------
 
-            method -        [str] Which method is used
+            method -                    [str] Which method is used
 
-            distribution -  [str] Which distribution to use
+            distribution -              [str] Which distribution to use. Must be one
+                                        of the distributions specified in chronos_utils
             
-            trend -         [tensor] The trend regressor specifying the trend observed
-                            excluding seasonalities
+            trend -                     [tensor] The trend regressor specifying the 
+                                        trend observed excluding seasonalities
 
-            seasonality -   [tensor] The seasonality tensor specifying all cyclical 
-                            regressors
+            seasonality -               [tensor] The seasonality tensor specifying all
+                                        cyclical regressors
 
-            y -             [tensor] The observed values
+            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+                                        be incorporated as multiplicative terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+            
+            additive_regressors -       [tesnor] A tensor of the regressors which will
+                                        be incorporated as additive terms.
+                                        Can be an empty tensor if no such regressors
+                                        exist.
+
+            y -                         [tensor] The observed values
             
             Returns:
             ------------
-            mu -            [tensor] The resulting expected value when combining trend
-                            and seasonality based on the seasonality mode
+            mu -                        [tensor] The resulting expected value when
+                                        combining trend and seasonality based on the 
+                                        seasonality mode
         '''
 
         if (distribution == chronos_utils.Normal_dist_code):

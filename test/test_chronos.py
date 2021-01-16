@@ -104,17 +104,18 @@ def test_predictions_not_nan(sample_data):
     '''
         Make sure no nans are returned during the prediction process
     '''
-    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
-        my_chronos.fit(sample_data)
+    for method in ["MAP", "MLE"]:
+        for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+            my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution, method=method)
+            my_chronos.fit(sample_data)
 
-        future_df = my_chronos.make_future_dataframe(include_history=False)
-        predictions = my_chronos.predict(future_df)
+            future_df = my_chronos.make_future_dataframe(include_history=False)
+            predictions = my_chronos.predict(future_df)
 
-        predictions.drop('y', axis=1, inplace=True)    
-        #print(predictions)
+            predictions.drop('y', axis=1, inplace=True)    
+            #print(predictions)
 
-        assert(predictions.isna().sum().sum() == 0)
+            assert(predictions.isna().sum().sum() == 0)
 
 
 
@@ -157,7 +158,7 @@ def test_prediction_no_changepoints(sample_data):
 
         predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-        assert(my_chronos.n_changepoints == 0)
+        assert(my_chronos._Chronos__n_changepoints == 0)
 
 ######################################################################
 
@@ -176,7 +177,7 @@ def test_prediction_too_small_for_default_changepoints(sample_data):
         future_df = my_chronos.make_future_dataframe()
         predictions = my_chronos.predict(future_df)
 
-        assert(my_chronos.n_changepoints < sample_data.shape[0])
+        assert(my_chronos._Chronos__n_changepoints < sample_data.shape[0])
 
 ######################################################################
 
