@@ -186,21 +186,47 @@ def test_prediction_with_easy_extra_regressors(sample_data):
         Test that when the size of the data is too small, the
         number of changepoints gets adjusted
     '''
-    return
-    z = my_df.index.values
+    
+    z = sample_data.index.values
+    y = 0.01 * z + np.sin(z/30)
+    sample_data['y'] = y
+    
+    # should be easy since the target is just dummy1 + dummy2
     dummy1 = 0.01 * z
-    my_df['dummy1'] = dummy1
-    my_df['dummy2'] = dummy2
+    dummy2 = np.sin(z/30)
+    sample_data['dummy1'] = dummy1
+    sample_data['dummy2'] = dummy2
 
     for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        my_chronos = Chronos(max_iter=100, n_changepoints=20, distribution=distribution)
 
-        # This should raise a warning about the size of the data and changepoint number
-        with pytest.warns(RuntimeWarning):
+        # Student t distribution has issues with the long tails
+        if (distribution != chronos_utils.StudentT_dist_code):
+            my_chronos = Chronos(max_iter=200, distribution=distribution)
+
+            # add dummies
+            my_chronos.add_regressors("dummy1")
+            my_chronos.add_regressors("dummy2")
+
             my_chronos.fit(sample_data)
 
-        future_df = my_chronos.make_future_dataframe()
-        predictions = my_chronos.predict(future_df)
 
-        assert(my_chronos.n_changepoints < sample_data.shape[0])
+            future_df = my_chronos.make_future_dataframe()
+
+            # Add dummies to future df
+            z = future_df.index.values
+
+            y = 0.01 * z + np.sin(z/30)
+            future_df['y'] = y
+            
+            dummy1 = 0.01 * z
+            dummy2 = np.sin(z/30)
+            future_df['dummy1'] = dummy1
+            future_df['dummy2'] = dummy2
+
+
+            # Make predictions
+            predictions = my_chronos.predict(future_df)
+
+            # The predictions should be almost the same as the target
+            assert(np.mean(np.abs(predictions['y'] - predictions['yhat'])) < 0.1)
 
