@@ -30,4 +30,4 @@ Prediction no: 1000
 >>> chronos_plotting.plot_components(predictions, my_chronos)
 ```
 
-![alt text](Divvy components.png)
+![alt text](Divvy_components.png)
