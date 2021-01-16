@@ -20,14 +20,20 @@ def sample_data():
     '''
         Make some sample data for the tests
     '''
+
+    '''
     dates = pd.date_range(start="2012-01-01", end="2012-01-08")
     measurements = list(range(dates.shape[0]))
 
     my_dataframe = pd.DataFrame({"ds": dates,
                                  "y": measurements})
-    my_dataframe['ds'] = pd.to_datetime(my_dataframe['ds'])
+    my_dataframe['ds'] = pd.to_datetime(my_dataframe['ds'])'''
+    range_limit = 365*4
+    x = np.array(range(range_limit))
+    my_df = pd.DataFrame({"ds": pd.date_range(start="2016-01-01", periods=range_limit, freq='d'),
+                          "y": 0.01 * x + np.sin(x/30)})
 
-    return my_dataframe
+    return my_df
 ######################################################################
 def test_basic_creation():
     '''
@@ -151,7 +157,7 @@ def test_prediction_no_changepoints(sample_data):
 
         predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-        assert(my_chronos.n_changepoints_ == 0)
+        assert(my_chronos.n_changepoints == 0)
 
 ######################################################################
 
@@ -165,10 +171,35 @@ def test_prediction_too_small_for_default_changepoints(sample_data):
 
         # This should raise a warning about the size of the data and changepoint number
         with pytest.warns(RuntimeWarning):
+            my_chronos.fit(sample_data.iloc[:10])
+
+        future_df = my_chronos.make_future_dataframe()
+        predictions = my_chronos.predict(future_df)
+
+        assert(my_chronos.n_changepoints < sample_data.shape[0])
+
+######################################################################
+
+def test_prediction_with_easy_extra_regressors(sample_data):
+    '''
+        Test that when the size of the data is too small, the
+        number of changepoints gets adjusted
+    '''
+    return
+    z = my_df.index.values
+    dummy1 = 0.01 * z
+    my_df['dummy1'] = dummy1
+    my_df['dummy2'] = dummy2
+
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(max_iter=100, n_changepoints=20, distribution=distribution)
+
+        # This should raise a warning about the size of the data and changepoint number
+        with pytest.warns(RuntimeWarning):
             my_chronos.fit(sample_data)
 
         future_df = my_chronos.make_future_dataframe()
         predictions = my_chronos.predict(future_df)
 
-        assert(my_chronos.n_changepoints_ < sample_data.shape[0])
+        assert(my_chronos.n_changepoints < sample_data.shape[0])
 

@@ -76,11 +76,11 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
     if (chronos_object is None):
         print("Chronos object not provided, seasonalities will not be plotted")
     else:
-        if (chronos_object.weekly_seasonality_order_ > 0):
+        if (chronos_object._Chronos__weekly_seasonality_order > 0):
             plot_num += 1
-        if (chronos_object.month_seasonality_order_ > 0):
+        if (chronos_object._Chronos__month_seasonality_order > 0):
             plot_num += 1
-        if (chronos_object.year_seasonality_order_ > 0):
+        if (chronos_object._Chronos__year_seasonality_order > 0):
             plot_num += 1
     
 
@@ -104,17 +104,17 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
 
     if (chronos_object is not None):
         # Plot all seasonalities. Each into an individual subplot
-        if (chronos_object.weekly_seasonality_order_ > 0):
+        if (chronos_object._Chronos__weekly_seasonality_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_weekly_seasonality(chronos_object, axs=ax)
             current_axs += 1
 
-        if (chronos_object.month_seasonality_order_ > 0):
+        if (chronos_object._Chronos__month_seasonality_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_monthly_seasonality(chronos_object, axs=ax)
             current_axs += 1
 
-        if (chronos_object.year_seasonality_order_ > 0):
+        if (chronos_object._Chronos__year_seasonality_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_yearly_seasonality(chronos_object, axs=ax)
             current_axs += 1
@@ -177,8 +177,8 @@ def plot_predictions(predictions, chronos_object=None, axs=None):
         time_col = "ds"
         target_col = "y"
     else:
-        time_col = chronos_object.time_col_
-        target_col = chronos_object.target_col_
+        time_col = chronos_object._Chronos__time_col
+        target_col = chronos_object._Chronos__target_col
 
     single_figure = False
     if (axs is None):
@@ -275,7 +275,7 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=
         changepoint_positions = []
     else:
         # If we have a chronos object, grab the relevant data
-        time_col = chronos_object.time_col_
+        time_col = chronos_object._Chronos__time_col
         changepoint_values = chronos_object.changepoints_values.detach().numpy()
         changepoint_positions = chronos_object.changepoints_positions.detach().numpy()
 
@@ -322,7 +322,7 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=
     
     # Optionally mark where history ends and predictions begin
     if (chronos_object is not None):
-        predictions_start_date = datetime.datetime.fromtimestamp(chronos_object.history_max_time_seconds)
+        predictions_start_date = datetime.datetime.fromtimestamp(chronos_object._Chronos__history_max_time_seconds)
     
         axs.axvline(datetime.date(predictions_start_date.year, 
                                   predictions_start_date.month, 
@@ -381,7 +381,7 @@ def plot_weekly_seasonality(chronos_object, axs=None):
     # but if it's multiplicative, we will only have positive values and
     # won't be a good idea to include the 0 line, otherwise it warps
     # the scale
-    if (chronos_object.seasonality_mode_ == "add"):
+    if (chronos_object._Chronos__seasonality_mode == "add"):
         axs.axhline(0.0, c="black", linestyle="--")
     else:
         axs.axhline(100.0, c="black", linestyle="--")
@@ -438,7 +438,7 @@ def plot_monthly_seasonality(chronos_object, axs=None):
     # but if it's multiplicative, we will only have positive values and
     # won't be a good idea to include the 0 line, otherwise it warps
     # the scale
-    if (chronos_object.seasonality_mode_ == "add"):
+    if (chronos_object._Chronos__seasonality_mode == "add"):
         axs.axhline(0.0, c="black", linestyle="--")
     else:
         axs.axhline(100.0, c="black", linestyle="--")
@@ -495,7 +495,7 @@ def plot_yearly_seasonality(chronos_object, axs=None):
     # but if it's multiplicative, we will only have positive values and
     # won't be a good idea to include the 0 line, otherwise it warps
     # the scale
-    if (chronos_object.seasonality_mode_ == "add"):
+    if (chronos_object._Chronos__seasonality_mode == "add"):
         axs.axhline(0.0, c="black", linestyle="--")
     else:
         axs.axhline(100.0, c="black", linestyle="--")
@@ -552,8 +552,8 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
         time_col = "ds"
         target_col = "y"
     else:
-        time_col = chronos_object.time_col_
-        target_col = chronos_object.target_col_
+        time_col = chronos_object._Chronos__time_col
+        target_col = chronos_object._Chronos__target_col
 
 
     x = predictions[time_col]
