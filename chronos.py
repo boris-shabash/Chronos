@@ -173,7 +173,7 @@ class Chronos:
 
         >>> predictions = my_chronos.predict(period=31)
         Prediction no: 1000
-        >>> chronos_plotting.plot_components(predictions, my_chronos);
+        >>> chronos_plotting.plot_components(predictions, my_chronos)
         ... plot appears
     '''
 
