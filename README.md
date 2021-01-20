@@ -8,7 +8,7 @@ Simple time series prediction model. Implemented using <a href="https://pyro.ai/
 
 To install chronos, run the following command from your terminal:
 ```python
-pip install chronos-time
+pip install chronos-forecast
 ```
 
 ## Simple Use Case
