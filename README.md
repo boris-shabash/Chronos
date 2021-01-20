@@ -1,12 +1,13 @@
 # Chronos
 
 ## Requirements:
-python >= 3.8
-pandas >= 1.1
-numpy >= 1.19
-matplotlib >= 3.2
-torch >= 1.5
-pyro-ppl >= 1.3
+
+* python >= 3.8
+* pandas >= 1.1
+* numpy >= 1.19
+* matplotlib >= 3.2
+* torch >= 1.5
+* pyro-ppl >= 1.3
 
 
 Simple time series prediction model. Implemented using <a href="https://pyro.ai/" target="_blank">Pyro</a> and greatly inspired by <a href="https://facebook.github.io/prophet/" target="_blank">Prophet</a>.

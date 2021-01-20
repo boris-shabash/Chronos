@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="chronos-forecast", 
-    version="0.0.8",
+    version="0.1.0",
     author="Boris Shabash",
     license="MIT",
     author_email="boris.shabash@gmail.com",
