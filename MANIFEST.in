@@ -3,3 +3,4 @@ include LICENSE
 include data/divvy_daily_rides.csv
 include images/Divvy_components.png
 recursive-include chronos *.py
+recursive-include notebooks *
