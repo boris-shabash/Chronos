@@ -6,8 +6,8 @@
 import os
 
 from chronos import Chronos
-from chronos import chronos_utils
-from chronos import chronos_plotting
+import chronos_utils
+import chronos_plotting
 
 import pytest
 

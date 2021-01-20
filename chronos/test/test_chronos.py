@@ -5,7 +5,7 @@
 
 
 from chronos import Chronos
-from chronos import chronos_utils
+import chronos_utils
 
 import pytest
 
