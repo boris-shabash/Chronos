@@ -4,6 +4,13 @@
 
 Simple time series prediction model. Implemented using <a href="https://pyro.ai/" target="_blank">Pyro</a> and greatly inspired by <a href="https://facebook.github.io/prophet/" target="_blank">Prophet</a>.
 
+## Installation
+
+To install chronos, run the following command from your terminal:
+```python
+pip install chronos-time
+```
+
 ## Simple Use Case
 
 With the files included, you can load the [Divvy bike daily](https://www.kaggle.com/yingwurenjian/chicago-divvy-bicycle-sharing-data?select=data.csv) data (the data has been aggregated since the original file is 2GB) as follows:
@@ -45,3 +52,4 @@ Prediction no: 1000
 
 Notice we can specify the distribution of the ride shares to be a gamma distribution to ensure they are never negative. Additionally, we made the seasonality multiplicative to make sure that its affect increases as the absolute number of
 rides increases.
+

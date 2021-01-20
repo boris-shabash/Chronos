@@ -15,8 +15,8 @@ import datetime
 
 
 
-import plotly
-import plotly.graph_objs as go
+#import plotly
+#import plotly.graph_objs as go
 
 
 history_color_ = "black"
