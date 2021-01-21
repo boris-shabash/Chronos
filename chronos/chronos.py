@@ -209,23 +209,23 @@ class Chronos:
         elif (max_iter <= 0):
             raise ValueError(f"max_iter must be a positive integer")
         else:
-            self.__n_iter = max_iter
+            self.__number_of_iterations = max_iter
 
 
-        self.__lr = learning_rate
-        self.__n_changepoints = n_changepoints
-        self.__changepoint_range  = changepoint_range
+        self.__learning_rate = learning_rate
+        self.__number_of_changepoints = n_changepoints
+        self.__proportion_of_data_subject_to_changepoints  = changepoint_range
+
+
         self.__changepoint_prior_scale = changepoint_prior_scale
         
         
-        self.__year_seasonality_order = year_seasonality_order
-        self.__weekly_seasonality_order = weekly_seasonality_order
-        self.__month_seasonality_order = month_seasonality_order
+        self.__year_seasonality_fourier_order = year_seasonality_order
+        self.__weekly_seasonality_fourier_order = weekly_seasonality_order
+        self.__month_seasonality_fourier_order = month_seasonality_order
 
         self.__seasonality_mode = seasonality_mode
 
-
-        #self.__ms_to_day_ratio = (1e9*60*60*24)
 
         self.__y_max = None
         self.__history_min_time_seconds = None
@@ -235,17 +235,30 @@ class Chronos:
         self.__additive_additional_regressors = []
         self.__multiplicative_additional_regressors = []
 
+        self.__additive_seasonalities = []
+        self.__multiplicative_seasonalities = []
+
+        
+
 
         self.__reserved_names = [f"trend{suffix}" for suffix in ["", "_upper", "_lower"]]
         self.__reserved_names.extend([f"yhat{suffix}" for suffix in ["", "_upper", "_lower"]])
 
-        #self.fitted = False
 
         if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
             raise ValueError(f"Distribution {distribution} is not supported. Supported distribution names are: {chronos_utils.SUPPORTED_DISTRIBUTIONS}")
         else:
-            self.__distribution = distribution
+            self.__y_likelihood_distribution = distribution
         
+    ######################################################################################################################## 
+    def __is_regressor_name_available(self, regressor_name):
+        '''
+            TODO: update
+        '''
+        if (regressor_name in self.__additive_additional_regressors) or (regressor_name in self.__multiplicative_additional_regressors):
+            return False
+        else:
+            return True
     ######################################################################################################################## 
     def add_regressors(self, regressor_name, regressor_method="add"):
         '''
@@ -273,8 +286,7 @@ class Chronos:
         '''
 
         # First check the name is available
-        if (regressor_name in self.__additive_additional_regressors) or \
-           (regressor_name in self.__multiplicative_additional_regressors):
+        if (self.__is_regressor_name_available(regressor_name)):
             raise ValueError(f"Name {regressor_name} is already in use")
 
         if (regressor_name in self.__reserved_names):
@@ -287,6 +299,36 @@ class Chronos:
             self.__multiplicative_additional_regressors.append(regressor_name)
         else:
             raise ValueError(f"method {regressor_method} is not supported, supported methods are 'add' or 'mul'")
+    ######################################################################################################################## 
+    def __yearly_cycle_extraction_function(self, date_column):
+        '''
+            TODO: update
+        '''
+
+        day_of_year = date_column.dt.dayofyear - 1 # make days start at 0
+        cycle_values = 2 * np.pi * day_of_year/366  # normalize data to be between 0.0 and 2pi
+
+        return cycle_values
+
+    ######################################################################################################################## 
+    def add_seasonality(self, name, fourier_order, cycle_extraction_function, seasonality_mode="add"):
+        '''
+            TODO: update
+        '''
+
+        seasonality = pd.DataFrame({})
+
+        cycle_values = cycle_extraction_function(self.internal_data[self.__time_col])
+
+
+        for i in range(1, fourier_order+1):
+            
+            seasonality[f"{name}_sin_{i}"] = np.sin(i * cycle_values) 
+            seasonality[f"{name}_cos_{i}"] = np.cos(I * cycle_values)
+
+        
+
+
     ######################################################################################################################## 
     def __transform_data(self, data):
         '''
@@ -330,8 +372,6 @@ class Chronos:
         '''
 
         # make a copy to avoid side effects of changing the original df
-        # and convert datetime column into time in days. This helps convergence
-        # BY A LOT
         internal_data = data.copy()
 
         for regressor_list in [self.__additive_additional_regressors, self.__multiplicative_additional_regressors]:
@@ -340,9 +380,14 @@ class Chronos:
                     raise KeyError(f"Could not find regressor '{regressor_name}' in data provided")
 
         # Grab additional regressors first
-        X_additive_regressors = torch.tensor(internal_data[self.__additive_additional_regressors].values, dtype=torch.float32)
-        X_multiplicative_regressors = torch.tensor(internal_data[self.__multiplicative_additional_regressors].values, dtype=torch.float32)
+        X_additive_regressors = torch.tensor(internal_data[self.__additive_additional_regressors].values, 
+                                             dtype=torch.float32)
+        X_multiplicative_regressors = torch.tensor(internal_data[self.__multiplicative_additional_regressors].values, 
+                                                   dtype=torch.float32)
         
+
+
+
 
         # Add weekday, monthday, and yearday seasonal components
         internal_data['weekday'] = internal_data[self.__time_col].dt.dayofweek
@@ -367,7 +412,7 @@ class Chronos:
 
 
         # Yearly seasonality 
-        for i in range(1, self.__year_seasonality_order+1):
+        for i in range(1, self.__year_seasonality_fourier_order+1):
             cycle_position = i*2*np.pi*internal_data['yearday']/366 # max value will be 365
                                                                       # since values will go from 0-365
             internal_data[f"yearly_sin_{i}"] = np.sin(cycle_position) 
@@ -376,7 +421,7 @@ class Chronos:
         
         
         # Monthly seasonality
-        for i in range(1, self.__month_seasonality_order+1):
+        for i in range(1, self.__month_seasonality_fourier_order+1):
             cycle_position = i*2*np.pi*internal_data['monthday']/31 # max value will be 30 since values
                                                                       # will go from 0 to 30
             internal_data[f"monthly_sin_{i}"] = np.sin(cycle_position) 
@@ -384,7 +429,7 @@ class Chronos:
             self.__seasonality_cols.extend([f"monthly_sin_{i}", f"monthly_cos_{i}"])
         
         # Weekly seasonality
-        for i in range(1, self.__weekly_seasonality_order+1):
+        for i in range(1, self.__weekly_seasonality_fourier_order+1):
             if (self.__trained_on_weekend == True):
                 cycle_position = i*2*np.pi*internal_data['weekday']/7 # max value will be 6 since values
                                                                         # will go from 0 to 6
@@ -418,7 +463,7 @@ class Chronos:
         if (self.__target_col in internal_data.columns):
 
             # Possion distribution requires counts, so we don't want to scale for it
-            if (self.__distribution not in [chronos_utils.Poisson_dist_code]):
+            if (self.__y_likelihood_distribution not in [chronos_utils.Poisson_dist_code]):
                 y_values = internal_data[self.__target_col].values/self.__y_max
             else:
                 y_values = internal_data[self.__target_col].values
@@ -575,19 +620,19 @@ class Chronos:
         X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
 
 
-        number_of_valid_changepoints = int(X_time.shape[0] * self.__changepoint_range)
-        if (number_of_valid_changepoints < self.__n_changepoints):
-            warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.__n_changepoints}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
-            self.__n_changepoints = number_of_valid_changepoints
+        number_of_valid_changepoints = int(X_time.shape[0] * self.__proportion_of_data_subject_to_changepoints)
+        if (number_of_valid_changepoints < self.__number_of_changepoints):
+            warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.__number_of_changepoints}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
+            self.__number_of_changepoints = number_of_valid_changepoints
 
         # Compute the changepoint frequency in changepoints/seconds
-        self.__changepoint_frequency = self.__n_changepoints/(self.__history_max_time_seconds - self.__history_min_time_seconds)
+        self.__changepoint_frequency = self.__number_of_changepoints/(self.__history_max_time_seconds - self.__history_min_time_seconds)
         
         
         
         # Find a set of evenly spaced changepoints in the training data, and 
         # buid a matrix describing the effect of the changepoints on each timepoint
-        self.__changepoints = self.__find_changepoint_positions(X_time, self.__n_changepoints, self.__changepoint_range)
+        self.__changepoints = self.__find_changepoint_positions(X_time, self.__number_of_changepoints, self.__proportion_of_data_subject_to_changepoints)
         A = self.__make_A_matrix(X_time, self.__changepoints)
         
         
@@ -687,7 +732,7 @@ class Chronos:
         # steps
         optimizer = Rprop
         scheduler = pyro.optim.ExponentialLR({'optimizer': optimizer, 
-                                              'optim_args': {'lr': self.__lr}, 
+                                              'optim_args': {'lr': self.__learning_rate}, 
                                               'gamma': 0.9})
         
         # Use the ELBO (evidence lower bound) loss function
@@ -700,7 +745,7 @@ class Chronos:
                         loss=my_loss)
         
         # Calculate when to print output
-        print_interval = max(self.__n_iter//10000, 10)
+        print_interval = max(self.__number_of_iterations//10000, 10)
 
 
         # Keep track of this for MAE metric
@@ -718,7 +763,7 @@ class Chronos:
                                 return_sites=("_RETURN",)) 
         
         # Iterate through the optimization
-        for step in range(self.__n_iter):
+        for step in range(self.__number_of_iterations):
             
             loss = self.svi_.step(X_time, 
                                   X_seasonality, 
@@ -736,7 +781,7 @@ class Chronos:
             
             # If required, print out the results
             if (step % print_interval == 0):
-                pct_done = round(100*(step+1)/self.__n_iter, 2)
+                pct_done = round(100*(step+1)/self.__number_of_iterations, 2)
 
                 # If we're reporting, grab samples for the predictions
                 samples = predictive(X_time, 
@@ -886,7 +931,7 @@ class Chronos:
         deltas = self.__add_future_changepoints(past_deltas, future_seconds_number)
 
         # Count the number of future changepoints simulated
-        future_changepoint_number = int(deltas.shape[0] - self.__n_changepoints)
+        future_changepoint_number = int(deltas.shape[0] - self.__number_of_changepoints)
         
         # If we need to simulate a certain number of future changepoints,
         # we will randomly draw their positions and create a new A
@@ -1044,7 +1089,7 @@ class Chronos:
         slope_init = pyro.param("trend_slope", torch.tensor(0.0))
 
         # define slope change values for each changepoint
-        past_deltas = pyro.param("delta", torch.zeros(self.__n_changepoints))
+        past_deltas = pyro.param("delta", torch.zeros(self.__number_of_changepoints))
         
 
 
@@ -1100,7 +1145,7 @@ class Chronos:
 
         # Sample observations based on the appropriate distribution
         mu = self.__predict_likelihood("MLE", 
-                                       self.__distribution, 
+                                       self.__y_likelihood_distribution, 
                                        trend, seasonality, 
                                        multiplicative_regressors, 
                                        additive_regressors, 
@@ -1630,8 +1675,8 @@ class Chronos:
         slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
 
         # define slope change values for each changepoint
-        past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.__n_changepoints), 
-                                                        torch.full((self.__n_changepoints, ), self.__changepoint_prior_scale)).to_event(1))
+        past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.__number_of_changepoints), 
+                                                        torch.full((self.__number_of_changepoints, ), self.__changepoint_prior_scale)).to_event(1))
 
 
         # If no observations are given, we assume we are in
@@ -1692,7 +1737,7 @@ class Chronos:
 
         # Sample observations based on the appropriate distribution
         mu = self.__predict_likelihood("MAP", 
-                                      self.__distribution, 
+                                      self.__y_likelihood_distribution, 
                                       trend, 
                                       seasonality, 
                                       multiplicative_regressors, 
