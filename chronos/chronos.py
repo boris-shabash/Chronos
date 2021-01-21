@@ -313,12 +313,12 @@ class Chronos:
                                             where n_samples is the number of samples in 
                                             data, and M is the sum of all seasonal orders
 
-            X_multiplicative_regressors -   [tesnor] A tensor of the regressors which will
+            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
                                             be incorporated as multiplicative terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
             
-            X_additive_regressors -         [tesnor] A tensor of the regressors which will
+            X_additive_regressors -         [tensor] A tensor of the regressors which will
                                             be incorporated as additive terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
@@ -657,12 +657,12 @@ class Chronos:
             X_seasonality -                 [tensor] The seasonality tensor specifying 
                                             all cyclical regressors
 
-            X_multiplicative_regressors -   [tesnor] A tensor of the regressors which will
+            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
                                             be incorporated as multiplicative terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
             
-            X_additive_regressors -         [tesnor] A tensor of the regressors which will
+            X_additive_regressors -         [tensor] A tensor of the regressors which will
                                             be incorporated as additive terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
@@ -1011,12 +1011,12 @@ class Chronos:
             X_seasonality -                 [tensor] The seasonality tensor specifying all
                                             cyclical regressors
 
-            X_multiplicative_regressors -   [tesnor] A tensor of the regressors which will
+            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
                                             be incorporated as multiplicative terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
             
-            X_additive_regressors -         [tesnor] A tensor of the regressors which will
+            X_additive_regressors -         [tensor] A tensor of the regressors which will
                                             be incorporated as additive terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
@@ -1128,12 +1128,12 @@ class Chronos:
             X_seasonality -                 [tensor] The seasonality tensor specifying 
                                             all cyclical regressors
 
-            X_multiplicative_regressors -   [tesnor] A tensor of the regressors which will
+            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
                                             be incorporated as multiplicative terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
             
-            X_additive_regressors -         [tesnor] A tensor of the regressors which will
+            X_additive_regressors -         [tensor] A tensor of the regressors which will
                                             be incorporated as additive terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
@@ -1172,12 +1172,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1257,12 +1257,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1315,12 +1315,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1370,12 +1370,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1433,12 +1433,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all 
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1497,12 +1497,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1551,12 +1551,12 @@ class Chronos:
             seasonality -               [tensor] The seasonality tensor specifying all
                                         cyclical regressors
 
-            multiplicative_regressors - [tesnor] A tensor of the regressors which will
+            multiplicative_regressors - [tensor] A tensor of the regressors which will
                                         be incorporated as multiplicative terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
             
-            additive_regressors -       [tesnor] A tensor of the regressors which will
+            additive_regressors -       [tensor] A tensor of the regressors which will
                                         be incorporated as additive terms.
                                         Can be an empty tensor if no such regressors
                                         exist.
@@ -1598,12 +1598,12 @@ class Chronos:
             X_seasonality -                 [tensor] The seasonality tensor specifying 
                                             all cyclical regressors
 
-            X_multiplicative_regressors -   [tesnor] A tensor of the regressors which will
+            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
                                             be incorporated as multiplicative terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
             
-            X_additive_regressors -         [tesnor] A tensor of the regressors which will
+            X_additive_regressors -         [tensor] A tensor of the regressors which will
                                             be incorporated as additive terms.
                                             Can be an empty tensor if no such regressors
                                             exist.
