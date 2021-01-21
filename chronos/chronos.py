@@ -708,7 +708,7 @@ class Chronos:
         if (self.__y_max is not None):
             y_true *= self.__y_max
 
-        #print(y_true)
+
         
         # Create a predictive object to predict for us for
         # metric reporting purposes
@@ -1219,15 +1219,7 @@ class Chronos:
             # The additive regressors have all been added before
             # using an efficient dot product operation
             mu = mu + additive_regressors
-        
-        
-
-        '''# check combine the trend and seasonality based on the
-        # seasonality mode
-        if (self.__seasonality_mode == "add"):
-            linear_combo = trend + seasonality
-        elif (self.__seasonality_mode == "mul"):
-            linear_combo = trend * seasonality '''
+    
 
         # Finally ensure the addition of seasonality does not interfere
         # with the observed data being positive
