@@ -238,11 +238,30 @@ class Chronos:
         self.__additive_seasonalities = []
         self.__multiplicative_seasonalities = []
 
+        self.__seasonality_cols = []
         
 
 
         self.__reserved_names = [f"trend{suffix}" for suffix in ["", "_upper", "_lower"]]
         self.__reserved_names.extend([f"yhat{suffix}" for suffix in ["", "_upper", "_lower"]])
+
+
+        self.add_seasonality("yearly", 
+                             self.__year_seasonality_fourier_order, 
+                             self.__yearly_cycle_extraction_function,
+                             self.__seasonality_mode)
+
+        self.add_seasonality("monthly", 
+                             self.__month_seasonality_fourier_order, 
+                             self.__monthly_cycle_extraction_function,
+                             self.__seasonality_mode)
+
+        self.add_seasonality("weekly", 
+                             self.__weekly_seasonality_fourier_order, 
+                             self.__weekly_cycle_extraction_function,
+                             self.__seasonality_mode)
+
+        self.__reserved_names.extend(["yearly", "monthly", "weekly"])
 
 
         if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
@@ -255,7 +274,9 @@ class Chronos:
         '''
             TODO: update
         '''
-        if (regressor_name in self.__additive_additional_regressors) or (regressor_name in self.__multiplicative_additional_regressors):
+        if (regressor_name in self.__additive_additional_regressors) or \
+            (regressor_name in self.__multiplicative_additional_regressors) or \
+            (regressor_name in self.__reserved_names):
             return False
         else:
             return True
@@ -286,11 +307,11 @@ class Chronos:
         '''
 
         # First check the name is available
-        if (self.__is_regressor_name_available(regressor_name)):
+        if (not self.__is_regressor_name_available(regressor_name)):
             raise ValueError(f"Name {regressor_name} is already in use")
 
-        if (regressor_name in self.__reserved_names):
-            raise ValueError(f"Name {regressor_name} is reserved")
+        '''if (regressor_name in self.__reserved_names):
+            raise ValueError(f"Name {regressor_name} is reserved")'''
 
         # Now add it to the appropriate bucket
         if (regressor_method == "add"):
@@ -299,6 +320,27 @@ class Chronos:
             self.__multiplicative_additional_regressors.append(regressor_name)
         else:
             raise ValueError(f"method {regressor_method} is not supported, supported methods are 'add' or 'mul'")
+
+    ######################################################################################################################## 
+    def __weekly_cycle_extraction_function(self, date_column):
+        '''
+            TODO: update
+        '''
+
+        day_of_week = date_column.dt.dayofweek      # days already start at 0
+        normalized_data = day_of_week/7             # normalize data to be between 0.0 and 1.0
+
+        return normalized_data
+    ######################################################################################################################## 
+    def __monthly_cycle_extraction_function(self, date_column):
+        '''
+            TODO: update
+        '''
+
+        day_of_month = date_column.dt.day - 1      # make days start at 0
+        normalized_data = day_of_month/31          # normalize data to be between 0.0 and 1.0
+
+        return normalized_data
     ######################################################################################################################## 
     def __yearly_cycle_extraction_function(self, date_column):
         '''
@@ -306,32 +348,77 @@ class Chronos:
         '''
 
         day_of_year = date_column.dt.dayofyear - 1 # make days start at 0
-        cycle_values = 2 * np.pi * day_of_year/366  # normalize data to be between 0.0 and 2pi
+        normalized_data = day_of_year/366  # normalize data to be between 0.0 and 1.0
 
-        return cycle_values
+        return normalized_data
 
     ######################################################################################################################## 
-    def add_seasonality(self, name, fourier_order, cycle_extraction_function, seasonality_mode="add"):
+    def add_seasonality(self, seasonality_name, fourier_order, cycle_extraction_function, seasonality_mode="add"):
+        '''
+            TODO: update
+        '''
+        if (not self.__is_regressor_name_available(seasonality_name)):
+            raise ValueError(f"Name {seasonality_name} is already in use")
+
+        seasonality_information = {"name": seasonality_name,
+                                   "order": fourier_order,
+                                   "extraction_function":cycle_extraction_function}
+
+        
+
+        if (seasonality_mode == "add"):            
+            self.__additive_seasonalities.append(seasonality_information)
+        elif (seasonality_mode == "mul"):
+            self.__multiplicative_seasonalities.append(seasonality_information)
+        else:
+            raise ValueError(f"Seasonality mode {seasonality_mode} is unsupported. Must be one of 'add' or 'mul'")
+
+        
+    ######################################################################################################################## 
+    def __create_seasonality_tuple(self, date_column, seasonality_dictionaries):
+        
+        X_seasonality = []
+
+        for seasonality_dictionary in seasonality_dictionaries:
+            seasonality_name = seasonality_dictionary['name']
+            fourier_order = seasonality_dictionary['order']
+            extraction_function = seasonality_dictionary['extraction_function']
+
+            number_of_sine_cosine_columns = fourier_order * 2
+            current_seasonality = torch.zeros(date_column.shape[0], number_of_sine_cosine_columns)
+
+            cycle = 2 * np.pi * extraction_function(date_column)
+
+            for fourier_term, index in enumerate(range(0, number_of_sine_cosine_columns, 2)):
+
+                current_fourier_term = (fourier_term+1) * cycle
+                current_seasonality[:, index] = torch.tensor(np.sin(current_fourier_term.values))
+                current_seasonality[:, index+1] = torch.tensor(np.cos(current_fourier_term.values))
+                self.__seasonality_cols.extend([f"{seasonality_name}_sin_{fourier_term+1}", f"{seasonality_name}_cos_{fourier_term+1}"])
+
+            X_seasonality.append(current_seasonality)
+
+        
+        return tuple(X_seasonality)
+    ######################################################################################################################## 
+    def __make_seasonality_tensors(self, date_column):
         '''
             TODO: update
         '''
 
-        seasonality = pd.DataFrame({})
+        
 
-        cycle_values = cycle_extraction_function(self.internal_data[self.__time_col])
-
-
-        for i in range(1, fourier_order+1):
-            
-            seasonality[f"{name}_sin_{i}"] = np.sin(i * cycle_values) 
-            seasonality[f"{name}_cos_{i}"] = np.cos(I * cycle_values)
-
+        X_multiplicative_seasonalities = self.__create_seasonality_tuple(date_column, self.__multiplicative_seasonalities)
+        X_additive_seasonalities = self.__create_seasonality_tuple(date_column, self.__additive_seasonalities)
         
 
 
+        return X_multiplicative_seasonalities, X_additive_seasonalities
+        
     ######################################################################################################################## 
     def __transform_data(self, data):
         '''
+            TODO: update return
             A function which takes the raw data containing the timestamp and
             target column, and returns tensors for the trend, seasonality, and additional
             components
@@ -386,21 +473,21 @@ class Chronos:
                                                    dtype=torch.float32)
         
 
+        
+        
+
+        X_multiplicative_seasonalities, X_additive_seasonalities = self.__make_seasonality_tensors(internal_data[self.__time_col])
 
 
-
-        # Add weekday, monthday, and yearday seasonal components
+        '''# Add weekday, monthday, and yearday seasonal components
         internal_data['weekday'] = internal_data[self.__time_col].dt.dayofweek
         internal_data['monthday'] = internal_data[self.__time_col].dt.day - 1      # make days start at 0
         internal_data['yearday'] = internal_data[self.__time_col].dt.dayofyear - 1 # make days start at 0
 
         
-        # Convert ms values to seconds
-        internal_data[self.__time_col] = internal_data[self.__time_col].values.astype(float)/1e9
         
-        if (self.__history_min_time_seconds is None):
-            self.__history_min_time_seconds = internal_data[self.__time_col].min()
-            self.__history_max_time_seconds = internal_data[self.__time_col].max()
+        
+        
         
         # Make time column go from 0 to 1
         internal_data[self.__time_col] = internal_data[self.__time_col] - self.__history_min_time_seconds
@@ -447,10 +534,16 @@ class Chronos:
         internal_data = internal_data.drop(['weekday', 'monthday', 'yearday'], axis=1)
 
         # Finally, grab the data and make it into tensors
-        X_time = torch.tensor(internal_data[self.__time_col].values, dtype=torch.float32)
-        X_seasonality = torch.tensor(internal_data[self.__seasonality_cols].values , dtype=torch.float32)
-
         
+        X_seasonality = torch.tensor(internal_data[self.__seasonality_cols].values , dtype=torch.float32)'''
+
+        # Convert ms values to seconds
+        internal_data[self.__time_col] = internal_data[self.__time_col].values.astype(float)/1e9
+        if (self.__history_min_time_seconds is None):
+            self.__history_min_time_seconds = internal_data[self.__time_col].min()
+            self.__history_max_time_seconds = internal_data[self.__time_col].max()
+
+        X_time = torch.tensor(internal_data[self.__time_col].values, dtype=torch.float32)
         
 
 
@@ -472,7 +565,9 @@ class Chronos:
         else:
             y = None
         
-        return X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y
+        #return X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y
+        
+        return X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y
         
     ########################################################################################################################
     def __find_changepoint_positions(self, X_time, changepoint_num, changepoint_range, min_value = None, drop_first = True):
@@ -617,7 +712,7 @@ class Chronos:
 
         
         # Transform the data by adding seasonality
-        X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
+        X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
 
 
         number_of_valid_changepoints = int(X_time.shape[0] * self.__proportion_of_data_subject_to_changepoints)
