@@ -157,7 +157,7 @@ def test_prediction_no_changepoints(sample_data):
 
         predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-        assert(my_chronos._Chronos__n_changepoints == 0)
+        assert(my_chronos._Chronos__number_of_changepoints == 0)
 
 ######################################################################
 
@@ -176,7 +176,7 @@ def test_prediction_too_small_for_default_changepoints(sample_data):
         future_df = my_chronos.make_future_dataframe()
         predictions = my_chronos.predict(future_df)
 
-        assert(my_chronos._Chronos__n_changepoints < sample_data.shape[0])
+        assert(my_chronos._Chronos__number_of_changepoints < sample_data.shape[0])
 
 ######################################################################
 
