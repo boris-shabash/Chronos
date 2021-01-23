@@ -261,7 +261,11 @@ class Chronos:
                              self.__weekly_cycle_extraction_function,
                              self.__seasonality_mode)
 
-        self.__reserved_names.extend(["yearly", "monthly", "weekly"])
+        #self.__reserved_names.extend(["yearly", "monthly", "weekly"])
+
+        self.__trend_components = {}
+        self.__multiplicative_components = {}
+        self.__additive_components = {}
 
 
         if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
@@ -273,6 +277,8 @@ class Chronos:
             self.__make_likelihood_mean_positive = True
         else:
             self.__make_likelihood_mean_positive = False
+
+        self.__A = None
         
     ######################################################################################################################## 
     def __is_regressor_name_available(self, regressor_name):
@@ -378,6 +384,8 @@ class Chronos:
         else:
             raise ValueError(f"Seasonality mode {seasonality_mode} is unsupported. Must be one of 'add' or 'mul'")
 
+        self.__reserved_names.append(seasonality_name)
+
         
     ######################################################################################################################## 
     def __create_seasonality_tuple(self, date_column, seasonality_dictionaries):
@@ -471,7 +479,7 @@ class Chronos:
                 if regressor_name not in internal_data.columns.values:
                     raise KeyError(f"Could not find regressor '{regressor_name}' in data provided")
 
-        # Grab additional regressors first
+        '''# Grab additional regressors first
         X_additive_regressors = torch.tensor(internal_data[self.__additive_additional_regressors].values, 
                                              dtype=torch.float32)
         X_multiplicative_regressors = torch.tensor(internal_data[self.__multiplicative_additional_regressors].values, 
@@ -481,7 +489,7 @@ class Chronos:
         
         
 
-        X_multiplicative_seasonalities, X_additive_seasonalities = self.__make_seasonality_tensors(internal_data[self.__time_col])
+        X_multiplicative_seasonalities, X_additive_seasonalities = self.__make_seasonality_tensors(internal_data[self.__time_col])#'''
 
 
         '''# Add weekday, monthday, and yearday seasonal components
@@ -541,6 +549,11 @@ class Chronos:
         # Finally, grab the data and make it into tensors
         
         X_seasonality = torch.tensor(internal_data[self.__seasonality_cols].values , dtype=torch.float32)'''
+        if (self.__target_col in internal_data.columns):
+            X_dataframe = internal_data.drop(self.__target_col, axis=1)
+        else:
+            X_dataframe = internal_data
+
 
         # Convert ms values to seconds
         internal_data[self.__time_col] = internal_data[self.__time_col].values.astype(float)/1e9
@@ -573,12 +586,16 @@ class Chronos:
                 y_values = internal_data[self.__target_col].values
             
             y = torch.tensor(y_values, dtype=torch.float32)
+
         else:
             y = None
         
         #return X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y
         
-        return X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y
+        #return X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y
+
+        
+        return X_time, X_dataframe, y
         
     ########################################################################################################################
     def __find_changepoint_positions(self, X_time, changepoint_num, changepoint_range, min_value = None, drop_first = True):
@@ -723,7 +740,11 @@ class Chronos:
 
         
         # Transform the data by adding seasonality
-        X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
+        #X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
+        
+        X_time, X_dataframe, y = self.__transform_data(data)
+        
+        
 
 
         number_of_valid_changepoints = int(X_time.shape[0] * self.__proportion_of_data_subject_to_changepoints)
@@ -739,7 +760,7 @@ class Chronos:
         # Find a set of evenly spaced changepoints in the training data, and 
         # buid a matrix describing the effect of the changepoints on each timepoint
         self.__changepoints = self.__find_changepoint_positions(X_time, self.__number_of_changepoints, self.__proportion_of_data_subject_to_changepoints)
-        A = self.__make_A_matrix(X_time, self.__changepoints)
+        self.__A = self.__make_A_matrix(X_time, self.__changepoints)
         
         
         
@@ -752,7 +773,7 @@ class Chronos:
                 
             elif (self.__method == "MAP"):
                 print("Employing Maximum A Posteriori")
-                self.__model = self.__model_MAP
+                self.__model = self.__model_exp
                 self.__guide = AutoDelta(self.__model, init_loc_fn=init_to_feasible)
                 self.__param_prefix  = "AutoDelta."
                 
@@ -762,11 +783,7 @@ class Chronos:
             self.__train_point_estimate(self.__model,
                                         self.__guide,
                                         X_time,
-                                        X_multiplicative_seasonalities, 
-                                        X_additive_seasonalities,
-                                        X_multiplicative_regressors, 
-                                        X_additive_regressors, 
-                                        A,
+                                        X_dataframe,
                                         y)
         elif (self.__method == "MCMC"):
             print("Employing Markov Chain Monte Carlo")
@@ -784,7 +801,7 @@ class Chronos:
         pass
     
     ########################################################################################################################
-    def __train_point_estimate(self, model, guide, X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, A, y):
+    def __train_point_estimate(self, model, guide, X_time, X_dataframe, y):
         '''
             TODO: update inputs
             A function which takes in the model and guide to use for
@@ -874,12 +891,7 @@ class Chronos:
         for step in range(self.__number_of_iterations):
             
             loss = self.svi_.step(X_time, 
-                                  X_multiplicative_seasonalities, 
-                                  X_additive_seasonalities, 
-                                  X_multiplicative_regressors, 
-                                  X_additive_regressors, 
-                                  A, 
-                                  self.__changepoints, 
+                                  X_dataframe, 
                                   y)
 
             # After calculating the loss, normalize by the 
@@ -983,8 +995,9 @@ class Chronos:
         return deltas
 
     ########################################################################################################################
-    def __simulate_potential_future(self, X_time, past_deltas, past_changepoints, A):
+    def __simulate_potential_future(self, X_time, past_deltas):
         '''
+            TODO: update input and output
             A function which simulates a potential future to account for future
             changepoints over X_time. The future may or may not contain changepoints
             and so a single run of this function simulates a potential future
@@ -1066,13 +1079,14 @@ class Chronos:
             future_changepoints = random_values * (last_future_trend_value - first_future_trend_value) + first_future_trend_value
             
             
-            combined_changepoints = torch.cat([past_changepoints, future_changepoints])
+            #combined_changepoints = torch.cat([past_changepoints, future_changepoints])
 
-            A = self.__make_A_matrix(X_time, combined_changepoints)
+            #A = self.__make_A_matrix(X_time, combined_changepoints)
         else:
-            combined_changepoints = past_changepoints
+            #combined_changepoints = past_changepoints
+            future_changepoints = torch.tensor([])
         
-        return deltas, combined_changepoints, A
+        return deltas, future_changepoints
 
     ########################################################################################################################
     def __compute_trend(self, X_time, slope_init, intercept_init, A, deltas, changepoints):
@@ -1862,6 +1876,156 @@ class Chronos:
         elif (distribution == chronos_utils.Gamma_dist_code):
             return self.__predict_gamma_likelihood(method, mu, y)
         
+    ########################################################################################################################    
+    def __compute_trend_exp(self, X_time, y):
+        '''
+            TODO: update
+        '''
+
+
+        intercept_init, slope_init = self.__sample_initial_slope_and_intercept(self.__method)
+
+        past_deltas = self.__sample_past_slope_changes(self.__method)
+
+        # If no observations are given, we assume we are in
+        # prediction mode. Therefore, we have to generate possible scenarios
+        # for the future changepoints as a simulation
+        if (y is None):
+            # Poor man's verbose printing of prediction number
+            if (self.__prediction_verbose == True):
+                self.predict_counter_ += 1
+                if (self.predict_counter_ > 0):
+                    print(f"Prediction no: {self.predict_counter_}", end="\r") 
+                       
+            deltas, future_changepoints = self.__simulate_potential_future(X_time, past_deltas)
+            
+            combined_changepoints = torch.cat([self.__changepoints, future_changepoints])            
+        else:
+            # If we are not in prediction mode, we only care about learning the past
+            deltas = past_deltas
+            combined_changepoints = self.__changepoints
+
+        A = self.__make_A_matrix(X_time, combined_changepoints)
+
+
+        # To adjust the rates we also need to adjust the displacement during each rate change
+        intercept_adjustments = -deltas * combined_changepoints
+
+        # There is a unique slope value and intercept value for each
+        # timepoint to create a piece-wise function
+        slope = slope_init + torch.matmul(A, deltas)
+        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
+
+        # Finally compute the trend component and record it in the global
+        # parameter store using the pyro.deterministic command
+        trend = slope * X_time + intercept
+        if (self.__make_likelihood_mean_positive == True):
+            trend = torch.nn.functional.softplus(trend, beta=100)
+
+        pyro.deterministic('trend', trend)
+
+
+        return trend
+    ########################################################################################################################    
+    def __compute_multiplicative_seasonalities_product(self, X_date):
+        '''
+            TODO: update
+        '''
+        total_seasonalities_product = torch.ones(X_date.shape[0], )
+
+        for multiplicative_seasonality in self.__multiplicative_seasonalities:
+            seasonality_name = multiplicative_seasonality['name']
+            seasonality_order = multiplicative_seasonality['order']
+            seasonality_extraction_function = multiplicative_seasonality['extraction_function']
+
+            if (seasonality_name in self.__multiplicative_components):
+                seasonality_tensor = self.__multiplicative_components[seasonality_name]
+            else:
+                cycle = torch.tensor(2 * np.pi * seasonality_extraction_function(X_date).values)
+                seasonality_tensor = torch.empty(X_date.shape[0], seasonality_order*2)
+
+                index = 0
+                for f in range(seasonality_order):
+                    fourier_term = (f+1) * cycle
+                    seasonality_tensor[:, index] = np.sin(fourier_term)
+                    seasonality_tensor[:, index+1] = np.cos(fourier_term)
+
+                    index += 2
+                
+                self.__multiplicative_components[seasonality_name] = seasonality_tensor
+
+            betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, seasonality_tensor, seasonality_name)
+            X_seasonality = seasonality_tensor.matmul(betas_seasonality)
+            X_seasonality = 1.0 + X_seasonality
+
+            total_seasonalities_product = total_seasonalities_product * X_seasonality
+
+
+        return total_seasonalities_product
+    ########################################################################################################################
+    def __compute_multiplicative_regressors_product(self, X_dataframe):
+        '''
+            TODO: update
+        '''
+        for additional_regressor in self.__multiplicative_additional_regressors:
+            if (additional_regressor not in X_dataframe.columns):
+                raise KeyError(f"Regressor '{additional_regressor}' not found in provided dataframe")
+
+        if ("regressors" not in self.__multiplicative_components):
+            X_multiplicative_regressors = torch.tensor(X_dataframe[self.__multiplicative_additional_regressors].values)
+            self.__multiplicative_components["regressors"] = X_multiplicative_regressors
+        else:
+            X_multiplicative_regressors = self.__multiplicative_components["regressors"]
+
+        betas_multiplicative_regressors = self.__sample_additional_regressors_coefficients(self.__method, X_multiplicative_regressors, "mul")
+
+        # Notice we don't do a matrix-vector product here, but rather an 
+        # row-wise multipication. The reason is we want to then find a cumulative
+        # product of all multiplicative regressors.
+        # i.e. if I have regressors reg1, reg2, and reg3, I want to multiply the trend
+        # by (reg1 * reg2 * reg3) rather than by (reg1 + reg2 + reg3)
+        multiplicative_regressors = X_multiplicative_regressors * betas_multiplicative_regressors
+
+        # The multiplicative regressors have to be adjusted so that they are larger than 1
+        # when positive, and between 0.0 and 1.0 when negative so that their multiplicative
+        # effect either dampens, or amplifies, the results, but never flips the sign
+        multiplicative_regressors = (1 + multiplicative_regressors) 
+
+        multiplicative_regressors_product = torch.prod(multiplicative_regressors, dim=1)
+
+        return multiplicative_regressors_product
+    ########################################################################################################################
+    ########################################################################################################################    
+    def __compute_multiplicative_component_exp(self, X_dataframe):
+        '''
+            TODO: update
+        '''
+
+        X_date = X_dataframe[self.__time_col]
+
+        total_seasonalities_product = self.__compute_multiplicative_seasonalities_product(X_date)
+
+        multiplicative_regressors_product = self.__compute_multiplicative_regressors_product(X_dataframe)
+
+        multiplicative_component = total_seasonalities_product * multiplicative_regressors_product
+
+        return multiplicative_component
+    ########################################################################################################################    
+    ########################################################################################################################    
+    ########################################################################################################################    
+    def __model_exp(self, X_time, X_dataframe, y=None):
+        '''
+            TODO: update
+        '''
+
+        trend = self.__compute_trend_exp(X_time, y)
+
+        multiplicative_component = self.__compute_multiplicative_component_exp(X_dataframe)
+
+        additive_component = self.__compute_additive_component_exp(X_dataframe)
+
+        mu = (trend * multiplicative_component) + additive_component
+
     ########################################################################################################################    
     def __model_MAP(self, X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, A, changepoints, y=None):
         '''
