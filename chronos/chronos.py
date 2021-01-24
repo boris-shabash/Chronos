@@ -1542,12 +1542,20 @@ class Chronos:
     ########################################################################################################################    
     def __compute_multiplicative_component(self, X_dataframe):
         '''
-            TODO: update
+            A function which looks at the data and computes all components that were
+            labeled as multiplicative. The function computes the product of all 
+            multiplicative seasonalities, then the product of all multiplicative
+            regressors, and then produces their product.
+
             Parameters:
             ------------
+            X_dataframe -               [pd.DataFrame] A pandas dataframe which contains 
+                                        all columns of the data except the target
 
             Returns:
             ------------
+            multiplicative_component -  [tenspr] A tensor containing the data for the 
+                                        multiplicative component of the model
         '''
 
         X_date = X_dataframe[self.__time_col]
@@ -1563,12 +1571,21 @@ class Chronos:
     ########################################################################################################################
     def __compute_additive_seasonalities_sum(self, X_date):
         '''
-            TODO: update
+            A function which accepts a pandas date series and computes all
+            additive seasonalities. Then combines the seasonalities
+            by computing their sum.
+            e.g. if seasonalities s1, s2, and s3 are requested, the resulting
+            tensor is (s1 + s2 + s3).
+
             Parameters:
             ------------
+            X_date -                    [pd.Series] A pandas series of dates as 
+                                        dtype pd.datetime64
 
             Returns:
             ------------
+            total_seasonalities_sum -   [tensor] A tensor of all additive
+                                        seasonalities, summed together.
         '''
         total_seasonalities_sum = torch.zeros(X_date.shape[0], )
 
@@ -1584,12 +1601,22 @@ class Chronos:
     ########################################################################################################################
     def __compute_additive_regressors_sum(self, X_dataframe):
         '''
-            TODO: update
+            A function which accepts a pandas dataframe and computes all
+            additive regressors' coefficients and effects. 
+            Then combines the regressors by computing the individual
+            regressors' sum.
+            e.g. if regressor effects r1, r2, and r3 are requested, the resulting
+            tensor is (r1 + r2 + r3).
+
             Parameters:
             ------------
+            X_dataframe -               [pd.DataFrame] A pandas dataframe which
+                                        contains the regressor values.
 
             Returns:
             ------------
+            additive_regressors_sum -   [tensor] A tensor of all additive
+                                        seasonalities, summed together.
         '''
         for additional_regressor in self.__additive_additional_regressors:
             if (additional_regressor not in X_dataframe.columns):
@@ -1611,12 +1638,20 @@ class Chronos:
     ########################################################################################################################
     def __compute_additive_component(self, X_dataframe):
         '''
-            TODO: update
+            A function which looks at the data and computes all components that were
+            labeled as additive. The function computes the sum of all 
+            additive seasonalities, then the sum of all additive
+            regressors, and then produces their sum.
+
             Parameters:
             ------------
+            X_dataframe -           [pd.DataFrame] A pandas dataframe which contains 
+                                    all columns of the data except the target
 
             Returns:
             ------------
+            additive_component -    [tenspr] A tensor containing the data for the 
+                                    additive component of the model
         '''
 
         X_date = X_dataframe[self.__time_col]
