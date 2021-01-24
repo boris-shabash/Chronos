@@ -1319,41 +1319,66 @@ class Chronos:
         elif (distribution == chronos_utils.Gamma_dist_code):
             return self.__predict_gamma_likelihood(method, mu, y)
         
-    ########################################################################################################################    
-    def __compute_trend(self, X_time, y):
+    ########################################################################################################################
+    def __compute_changepoint_positions_and_values(self, X_time, y):
         '''
-            TODO: update
-            A function
+            A function which finds the position of changepoints in the time
+            frame provided, and samples their values. If unobserved time
+            frame is provided (prediction), also simulated future
+            changepoints.
+
             Parameters:
             ------------
+            X_time -            [tensor] The tensor of timesteps, in seconds
+
+            y -                 [tensor] The tensor of observed values. Or None if
+                                we are in prediction mode
 
             Returns:
             ------------
+            changepoint_tuple - [tuple] A tuple of:
+                                deltas -                [tensor] The changepoint values
+                                combined_changepoints - [tensor] the changepoint positions
         '''
-
-
-        intercept_init, slope_init = self.__sample_initial_slope_and_intercept(self.__method)
-
         past_deltas = self.__sample_past_slope_changes(self.__method)
 
         # If no observations are given, we assume we are in
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
         if (y is None):
-            # Poor man's verbose printing of prediction number
-            if (self.__prediction_verbose == True):
-                self.predict_counter_ += 1
-                if (self.predict_counter_ > 0):
-                    print(f"Prediction no: {self.predict_counter_}", end="\r") 
-                       
-            deltas, future_changepoints = self.__simulate_potential_future(X_time, past_deltas)
-            
+            deltas, future_changepoints = self.__simulate_potential_future(X_time, past_deltas)            
             combined_changepoints = torch.cat([self.__changepoints, future_changepoints])            
         else:
             # If we are not in prediction mode, we only care about learning the past
             deltas = past_deltas
             combined_changepoints = self.__changepoints
 
+        return deltas, combined_changepoints
+    ########################################################################################################################
+    def __compute_trend(self, X_time, y):
+        '''
+            A function which computes the trend component T(t). The function
+            computes the initial slope, intercept, and changepoints for the
+            time series and then combines them.
+
+
+            Parameters:
+            ------------
+            X_time -    [tensor] The tensor of timesteps, in seconds
+
+            y -         [tensor] The tensor of observed values. Or None if
+                        we are in prediction mode
+
+            Returns:
+            ------------
+            trend -     [tensor] The trend tensor which describes the growth
+                        excluding seasonalities and additional regressors
+        '''
+
+
+        intercept_init, slope_init = self.__sample_initial_slope_and_intercept(self.__method)
+
+        deltas, combined_changepoints = self.__compute_changepoint_positions_and_values(X_time, y)
         A = self.__make_A_matrix(X_time, combined_changepoints)
 
 
@@ -1375,41 +1400,87 @@ class Chronos:
 
 
         return trend
-    ########################################################################################################################    
-    def __compute_multiplicative_seasonalities_product(self, X_date):
+    ########################################################################################################################
+    def __create_seasonality_from_specs(self, X_date, seasonality_specs, seasonality_memoization_dictionary):
         '''
-            TODO: update
+            A function which takes up a series of dates, and specs on how to construct
+            seasonality from the dates, and returns the constructed seasonality.
+            If the seasonality fourier terms have been calculated once they are
+            loaded from the seasonality_memoization_dictionary. Otherwise, they are
+            stored there after being computed
+
             Parameters:
             ------------
+            X_date -                                [pd.Series] A pandas series of dates
+                                                    as dtype pd.datetime64
+            
+            seasonality_specs -                     [dict] A dictionary with the
+                                                    seasonality specifications
+            
+            seasonality_memoization_dictionary -    [dict] A memoization dictionary which
+                                                    stores the fourier components of the
+                                                    seasonality after it is calculated 
+                                                    once
 
             Returns:
             ------------
+            X_seasonality -                         [tensor] A tensor containing the
+                                                    values of the computed seasonality.
+                                                    The tensor is the same length as
+                                                    the date series inputted.
+        '''
+        seasonality_name = seasonality_specs['name']
+        seasonality_order = seasonality_specs['order']
+        seasonality_extraction_function = seasonality_specs['extraction_function']
+
+        if (seasonality_name in seasonality_memoization_dictionary):
+            seasonality_tensor = seasonality_memoization_dictionary[seasonality_name]
+        else:
+            cycle = torch.tensor(2 * np.pi * seasonality_extraction_function(X_date).values)
+            seasonality_tensor = torch.empty(X_date.shape[0], seasonality_order*2)
+
+            index = 0
+            for f in range(seasonality_order):
+                fourier_term = (f+1) * cycle
+                seasonality_tensor[:, index] = np.sin(fourier_term)
+                seasonality_tensor[:, index+1] = np.cos(fourier_term)
+
+                index += 2
+            
+            seasonality_memoization_dictionary[seasonality_name] = seasonality_tensor
+
+        betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, seasonality_tensor, seasonality_name)
+        X_seasonality = seasonality_tensor.matmul(betas_seasonality)
+
+        return X_seasonality
+    ########################################################################################################################
+    def __compute_multiplicative_seasonalities_product(self, X_date):
+        '''
+            A function which accepts a pandas date series and computes all
+            multiplicative seasonalities. Then combines the seasonalities
+            by computing their product.
+            e.g. if seasonalities s1, s2, and s3 are requested, the resulting
+            tensor is (s1 * s2 * s3).
+            The seasonalities have 1.0 added to them so that positive values
+            amplify the results, and negative values dampen the results.
+
+            Parameters:
+            ------------
+            X_date -                        [pd.Series] A pandas series of dates as 
+                                            dtype pd.datetime64
+
+            Returns:
+            ------------
+            total_seasonalities_product -   [tensor] A tensor of all multiplicative
+                                            seasonalities, multiplied together.
         '''
         total_seasonalities_product = torch.ones(X_date.shape[0], )
 
         for multiplicative_seasonality in self.__multiplicative_seasonalities:
-            seasonality_name = multiplicative_seasonality['name']
-            seasonality_order = multiplicative_seasonality['order']
-            seasonality_extraction_function = multiplicative_seasonality['extraction_function']
+            X_seasonality = self.__create_seasonality_from_specs(X_date, 
+                                                                 multiplicative_seasonality, 
+                                                                 self.__multiplicative_components)
 
-            if (seasonality_name in self.__multiplicative_components):
-                seasonality_tensor = self.__multiplicative_components[seasonality_name]
-            else:
-                cycle = torch.tensor(2 * np.pi * seasonality_extraction_function(X_date).values)
-                seasonality_tensor = torch.empty(X_date.shape[0], seasonality_order*2)
-
-                index = 0
-                for f in range(seasonality_order):
-                    fourier_term = (f+1) * cycle
-                    seasonality_tensor[:, index] = np.sin(fourier_term)
-                    seasonality_tensor[:, index+1] = np.cos(fourier_term)
-
-                    index += 2
-                
-                self.__multiplicative_components[seasonality_name] = seasonality_tensor
-
-            betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, seasonality_tensor, seasonality_name)
-            X_seasonality = seasonality_tensor.matmul(betas_seasonality)
             X_seasonality = 1.0 + X_seasonality
 
             total_seasonalities_product = total_seasonalities_product * X_seasonality
@@ -1419,12 +1490,24 @@ class Chronos:
     ########################################################################################################################
     def __compute_multiplicative_regressors_product(self, X_dataframe):
         '''
-            TODO: update
+            A function which accepts a pandas dataframe and computes all
+            multiplicative regressors' coefficients and effects. 
+            Then combines the regressors by computing the individual
+            regressors' product.
+            e.g. if regressor effects r1, r2, and r3 are requested, the resulting
+            tensor is (r1 * r2 * r3).
+            The regressors have 1.0 added to them so that positive values
+            amplify the results, and negative values dampen the results.
+
             Parameters:
             ------------
+            X_dataframe -                       [pd.DataFrame] A pandas dataframe which
+                                                contains the regressor values.
 
             Returns:
             ------------
+            multiplicative_regressors_product - [tensor] A tensor of all multiplicative
+                                                seasonalities, multiplied together.
         '''
         for additional_regressor in self.__multiplicative_additional_regressors:
             if (additional_regressor not in X_dataframe.columns):
@@ -1436,7 +1519,9 @@ class Chronos:
         else:
             X_multiplicative_regressors = self.__multiplicative_components["regressors"]
 
-        betas_multiplicative_regressors = self.__sample_additional_regressors_coefficients(self.__method, X_multiplicative_regressors, "mul")
+        betas_multiplicative_regressors = self.__sample_additional_regressors_coefficients(self.__method, 
+                                                                                           X_multiplicative_regressors, 
+                                                                                           "mul")
 
         # Notice we don't do a matrix-vector product here, but rather an 
         # row-wise multipication. The reason is we want to then find a cumulative
@@ -1453,7 +1538,7 @@ class Chronos:
         multiplicative_regressors_product = torch.prod(multiplicative_regressors, dim=1)
 
         return multiplicative_regressors_product
-    ########################################################################################################################
+
     ########################################################################################################################    
     def __compute_multiplicative_component(self, X_dataframe):
         '''
@@ -1474,9 +1559,7 @@ class Chronos:
         multiplicative_component = multiplicative_seasonalities_product * multiplicative_regressors_product
 
         return multiplicative_component
-    ########################################################################################################################
-    ########################################################################################################################
-    ########################################################################################################################
+
     ########################################################################################################################
     def __compute_additive_seasonalities_sum(self, X_date):
         '''
@@ -1490,28 +1573,9 @@ class Chronos:
         total_seasonalities_sum = torch.zeros(X_date.shape[0], )
 
         for additive_seasonality in self.__additive_seasonalities:
-            seasonality_name = additive_seasonality['name']
-            seasonality_order = additive_seasonality['order']
-            seasonality_extraction_function = additive_seasonality['extraction_function']
-
-            if (seasonality_name in self.__additive_components):
-                seasonality_tensor = self.__additive_components[seasonality_name]
-            else:
-                cycle = torch.tensor(2 * np.pi * seasonality_extraction_function(X_date).values)
-                seasonality_tensor = torch.empty(X_date.shape[0], seasonality_order*2)
-
-                index = 0
-                for f in range(seasonality_order):
-                    fourier_term = (f+1) * cycle
-                    seasonality_tensor[:, index] = np.sin(fourier_term)
-                    seasonality_tensor[:, index+1] = np.cos(fourier_term)
-
-                    index += 2
-                
-                self.__additive_components[seasonality_name] = seasonality_tensor
-
-            betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, seasonality_tensor, seasonality_name)
-            X_seasonality = seasonality_tensor.matmul(betas_seasonality)
+            X_seasonality = self.__create_seasonality_from_specs(X_date, 
+                                                                 additive_seasonality, 
+                                                                 self.__additive_components)
 
             total_seasonalities_sum = total_seasonalities_sum + X_seasonality
 
@@ -1565,7 +1629,6 @@ class Chronos:
 
         return additive_component
     ########################################################################################################################    
-    ########################################################################################################################    
     def __model_function(self, X_time, X_dataframe, y=None):
         '''
             TODO: update
@@ -1575,6 +1638,13 @@ class Chronos:
             Returns:
             ------------
         '''
+        if (y is None):
+            # Poor man's verbose printing of prediction number
+            if (self.__prediction_verbose == True):
+                self.predict_counter_ += 1
+                if (self.predict_counter_ > 0):
+                    print(f"Prediction no: {self.predict_counter_}", end="\r")
+
 
         trend = self.__compute_trend(X_time, y)
 
@@ -1597,7 +1667,6 @@ class Chronos:
         return mu
 
 
-    ########################################################################################################################    
     ########################################################################################################################
     def predict(self, 
                 future_df=None, 
