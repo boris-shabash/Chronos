@@ -189,7 +189,7 @@ class Chronos:
                  changepoint_range = 0.8,
                  changepoint_prior_scale = 0.05,
                  distribution = "Normal",
-                 seasonality_mode = "mul",
+                 seasonality_mode = "add",
                  max_iter=1000):
 
         '''
@@ -339,7 +339,10 @@ class Chronos:
         '''
 
         day_of_week = date_column.dt.dayofweek      # days already start at 0
-        normalized_data = day_of_week/7             # normalize data to be between 0.0 and 1.0
+        if (self.__trained_on_weekend):
+            normalized_data = day_of_week/7             # normalize data to be between 0.0 and 1.0
+        else:
+            normalized_data = day_of_week/5             # normalize data to be between 0.0 and 1.0
 
         return normalized_data
     ######################################################################################################################## 
@@ -2614,7 +2617,7 @@ class Chronos:
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
-    def __get_seasonal_params(self, param_name, seasonality_name):
+    def __get_seasonal_params(self, param_name):
         '''
             A function which accepts the name of the parameter store where
             seasonality coefficients are stored, and the seasonality name,
@@ -2641,12 +2644,16 @@ class Chronos:
 
         seasonal_params = []
 
+        #for param in pyro.get_param_store():
+        #    print(param)
+
+        #print(param_name)
+
         # Go through all coefficients in param_name and find
         # those that correspond to the seasonality columns
         # created for this data
-        for i, param in enumerate(pyro.param(param_name)):
-            if (seasonality_name in self.__seasonality_cols[i]):
-                seasonal_params.append(param.item())
+        for param in pyro.param(param_name):
+            seasonal_params.append(param.item())
 
         # Reshape to have two columns. The parameters are assumed to be
         # in order (sin_param1, cos_param1, sin_param2, cos_param2, ...) 
@@ -2678,7 +2685,7 @@ class Chronos:
         '''
 
         # Get the parameter pairs of coefficients
-        weekly_params = self.__get_seasonal_params(param_name, "weekly")
+        weekly_params = self.__get_seasonal_params(param_name+"_weekly")
         
         # Monday is assumed to be 0
         weekdays_numeric = np.arange(0, 7, 1)
@@ -2720,7 +2727,7 @@ class Chronos:
         '''
 
         # Get the parameter pairs of coefficients
-        monthly_params = self.__get_seasonal_params(param_name, "monthly")
+        monthly_params = self.__get_seasonal_params(param_name+"_monthly")
         
         monthdays_numeric = np.arange(0, 31, 1)
         monthday_names = chronos_utils.monthday_names_
@@ -2760,7 +2767,7 @@ class Chronos:
         '''
         
         # Get the parameter pairs of coefficients
-        yearly_params = self.__get_seasonal_params(param_name, "yearly")
+        yearly_params = self.__get_seasonal_params(param_name+"_yearly")
         
         yeardays_numeric = np.arange(0, 366, 1)
         yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th

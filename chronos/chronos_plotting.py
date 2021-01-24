@@ -76,11 +76,11 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
     if (chronos_object is None):
         print("Chronos object not provided, seasonalities will not be plotted")
     else:
-        if (chronos_object._Chronos__weekly_seasonality_order > 0):
+        if (chronos_object._Chronos__weekly_seasonality_fourier_order > 0):
             plot_num += 1
-        if (chronos_object._Chronos__month_seasonality_order > 0):
+        if (chronos_object._Chronos__month_seasonality_fourier_order > 0):
             plot_num += 1
-        if (chronos_object._Chronos__year_seasonality_order > 0):
+        if (chronos_object._Chronos__year_seasonality_fourier_order > 0):
             plot_num += 1
     
 
@@ -104,17 +104,17 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
 
     if (chronos_object is not None):
         # Plot all seasonalities. Each into an individual subplot
-        if (chronos_object._Chronos__weekly_seasonality_order > 0):
+        if (chronos_object._Chronos__weekly_seasonality_fourier_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_weekly_seasonality(chronos_object, axs=ax)
             current_axs += 1
 
-        if (chronos_object._Chronos__month_seasonality_order > 0):
+        if (chronos_object._Chronos__month_seasonality_fourier_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_monthly_seasonality(chronos_object, axs=ax)
             current_axs += 1
 
-        if (chronos_object._Chronos__year_seasonality_order > 0):
+        if (chronos_object._Chronos__year_seasonality_fourier_order > 0):
             ax = fig.add_subplot(gs[current_axs, : ])
             plot_yearly_seasonality(chronos_object, axs=ax)
             current_axs += 1
