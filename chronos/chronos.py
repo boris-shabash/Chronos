@@ -261,11 +261,6 @@ class Chronos:
                              self.__weekly_cycle_extraction_function,
                              self.__seasonality_mode)
 
-        #self.__reserved_names.extend(["yearly", "monthly", "weekly"])
-
-        self.__trend_components = {}
-        self.__multiplicative_components = {}
-        self.__additive_components = {}
 
 
         if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
@@ -277,13 +272,20 @@ class Chronos:
             self.__make_likelihood_mean_positive = True
         else:
             self.__make_likelihood_mean_positive = False
-
-        self.__A = None
         
     ######################################################################################################################## 
     def __is_regressor_name_available(self, regressor_name):
         '''
-            TODO: update
+            A function which checks to see if the regressor name is available.
+
+            Parameters:
+            ------------
+            regressor_name -    [str] A string which is the regressor name 
+
+            Returns:
+            ------------
+            is_available -      [bool] True if the name is available,
+                                False otherwise
         '''
         if (regressor_name in self.__additive_additional_regressors) or \
             (regressor_name in self.__multiplicative_additional_regressors) or \
@@ -321,8 +323,6 @@ class Chronos:
         if (not self.__is_regressor_name_available(regressor_name)):
             raise ValueError(f"Name {regressor_name} is already in use")
 
-        '''if (regressor_name in self.__reserved_names):
-            raise ValueError(f"Name {regressor_name} is reserved")'''
 
         # Now add it to the appropriate bucket
         if (regressor_method == "add"):
@@ -335,7 +335,20 @@ class Chronos:
     ######################################################################################################################## 
     def __weekly_cycle_extraction_function(self, date_column):
         '''
-            TODO: update
+            A function which extracts the weekly cycle from the date column provided
+            to it.
+
+            Parameters:
+            ------------
+            date_column -       [pd.Series] A pandas series of date type which supports
+                                datetime functions.
+
+            Returns:
+            ------------
+            normalized_data -   [pd.Series] A pandas series with values in the half
+                                open interval [0, 1.0) where 1.0 would correspond
+                                to a full cycle, and each value correspond to the
+                                position in the cycle.
         '''
 
         day_of_week = date_column.dt.dayofweek      # days already start at 0
@@ -348,7 +361,20 @@ class Chronos:
     ######################################################################################################################## 
     def __monthly_cycle_extraction_function(self, date_column):
         '''
-            TODO: update
+            A function which extracts the monthly cycle from the date column provided
+            to it.
+
+            Parameters:
+            ------------
+            date_column -       [pd.Series] A pandas series of date type which supports
+                                datetime functions.
+
+            Returns:
+            ------------
+            normalized_data -   [pd.Series] A pandas series with values in the half
+                                open interval [0, 1.0) where 1.0 would correspond
+                                to a full cycle, and each value correspond to the
+                                position in the cycle.
         '''
 
         day_of_month = date_column.dt.day - 1      # make days start at 0
@@ -358,18 +384,59 @@ class Chronos:
     ######################################################################################################################## 
     def __yearly_cycle_extraction_function(self, date_column):
         '''
-            TODO: update
+            A function which extracts the yearly cycle from the date column provided
+            to it.
+
+            Parameters:
+            ------------
+            date_column -       [pd.Series] A pandas series of date type which supports
+                                datetime functions.
+
+            Returns:
+            ------------
+            normalized_data -   [pd.Series] A pandas series with values in the half
+                                open interval [0, 1.0) where 1.0 would correspond
+                                to a full cycle, and each value correspond to the
+                                position in the cycle.
         '''
 
-        day_of_year = date_column.dt.dayofyear - 1 # make days start at 0
-        normalized_data = day_of_year/366  # normalize data to be between 0.0 and 1.0
+        day_of_year = date_column.dt.dayofyear - 1  # make days start at 0
+        normalized_data = day_of_year/366           # normalize data to be between 0.0 and 1.0
 
         return normalized_data
 
     ######################################################################################################################## 
     def add_seasonality(self, seasonality_name, fourier_order, cycle_extraction_function, seasonality_mode="add"):
         '''
-            TODO: update
+            A function to add a requested seasonality to the inference process. The seasonality is
+            added to a list of seasonalities to construct, but is not constructed here. It is
+            constructed during the .fit method.
+
+
+            Parameters:
+            ------------
+            seasonality_name -          [str] The name of the seasonality. Must be
+                                        a unique name and cannot be one of the
+                                        reserved names. e.g. 'yearly', 'monthly',
+                                        or 'daily'.
+
+            fourier_order -             [int] The fourier order of the seasonality.
+                                        Must be a positive integer. Higher values allow
+                                        for better fitting, but might also overfit.
+
+            cycle_extraction_function - [callable] A function which implements cycle
+                                        extraction from a date column. It should
+                                        accept a pandas series of datetime and
+                                        return a pandas series of the same size with
+                                        values from the half open interval [0.0, 1.0)
+
+            seasonality_mode -          [str] The mode of this seasonality. Must be
+                                        either "add" or "mul".
+
+
+            Returns:
+            ------------
+            None
         '''
         if (not self.__is_regressor_name_available(seasonality_name)):
             raise ValueError(f"Name {seasonality_name} is already in use")
@@ -391,87 +458,34 @@ class Chronos:
 
         
     ######################################################################################################################## 
-    def __create_seasonality_tuple(self, date_column, seasonality_dictionaries):
-        
-        X_seasonality = []
-
-        for seasonality_dictionary in seasonality_dictionaries:
-            seasonality_name = seasonality_dictionary['name']
-            fourier_order = seasonality_dictionary['order']
-            extraction_function = seasonality_dictionary['extraction_function']
-
-            number_of_sine_cosine_columns = fourier_order * 2
-            current_seasonality = torch.zeros(date_column.shape[0], number_of_sine_cosine_columns)
-
-            cycle = 2 * np.pi * extraction_function(date_column)
-
-            for fourier_term, index in enumerate(range(0, number_of_sine_cosine_columns, 2)):
-
-                current_fourier_term = (fourier_term+1) * cycle
-                current_seasonality[:, index] = torch.tensor(np.sin(current_fourier_term.values))
-                current_seasonality[:, index+1] = torch.tensor(np.cos(current_fourier_term.values))
-                self.__seasonality_cols.extend([f"{seasonality_name}_sin_{fourier_term+1}", f"{seasonality_name}_cos_{fourier_term+1}"])
-
-            X_seasonality.append(current_seasonality)
-
-        
-        return tuple(X_seasonality)
-    ######################################################################################################################## 
-    def __make_seasonality_tensors(self, date_column):
-        '''
-            TODO: update
-        '''
-
-        
-
-        X_multiplicative_seasonalities = self.__create_seasonality_tuple(date_column, self.__multiplicative_seasonalities)
-        X_additive_seasonalities = self.__create_seasonality_tuple(date_column, self.__additive_seasonalities)
-        
-
-
-        return X_multiplicative_seasonalities, X_additive_seasonalities
-        
-    ######################################################################################################################## 
     def __transform_data(self, data):
         '''
-            TODO: update return
             A function which takes the raw data containing the timestamp and
             target column, and returns tensors for the trend, seasonality, and additional
             components
 
             Parameters:
             ------------
-            data -                          [DataFrame] The dataframe with the raw data. 
-                                            Must contain at least one column with the 
-                                            timestamp (with dtype np.datetime64). It 
-                                            can optionally also contain the 
-                                            target column
+            data -          [DataFrame] The dataframe with the raw data. 
+                            Must contain at least one column with the 
+                            timestamp (with dtype np.datetime64). It 
+                            can optionally also contain the 
+                            target column
 
             
             Returns:
             ------------
-            X_time -                        [tensor] A tensor of shape (n_samples, ), 
-                                            where n_samples is the number of samples in 
-                                            data
+            X_time -        [tensor] A tensor of shape (n_samples, ), 
+                            where n_samples is the number of samples in 
+                            data
 
-            X_seasonality -                 [tensor] A tensor of shape (n_samples, M) 
-                                            where n_samples is the number of samples in 
-                                            data, and M is the sum of all seasonal orders
+            X_dataframe -   [pd.DataFrame] - A pandas dataframe of all
+                            columns except the target column if it is present
 
-            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
-                                            be incorporated as multiplicative terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-            
-            X_additive_regressors -         [tensor] A tensor of the regressors which will
-                                            be incorporated as additive terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-
-            y -                             [tensor] A tensor of shape (n_samples, ), 
-                                            where n_samples is the number of samples in
-                                            data, or None if there is no target column in
-                                            the original data
+            y -             [tensor] A tensor of shape (n_samples, ), 
+                            where n_samples is the number of samples in
+                            data, or None if there is no target column in
+                            the original data
         '''
 
         # make a copy to avoid side effects of changing the original df
@@ -482,76 +496,6 @@ class Chronos:
                 if regressor_name not in internal_data.columns.values:
                     raise KeyError(f"Could not find regressor '{regressor_name}' in data provided")
 
-        '''# Grab additional regressors first
-        X_additive_regressors = torch.tensor(internal_data[self.__additive_additional_regressors].values, 
-                                             dtype=torch.float32)
-        X_multiplicative_regressors = torch.tensor(internal_data[self.__multiplicative_additional_regressors].values, 
-                                                   dtype=torch.float32)
-        
-
-        
-        
-
-        X_multiplicative_seasonalities, X_additive_seasonalities = self.__make_seasonality_tensors(internal_data[self.__time_col])#'''
-
-
-        '''# Add weekday, monthday, and yearday seasonal components
-        internal_data['weekday'] = internal_data[self.__time_col].dt.dayofweek
-        internal_data['monthday'] = internal_data[self.__time_col].dt.day - 1      # make days start at 0
-        internal_data['yearday'] = internal_data[self.__time_col].dt.dayofyear - 1 # make days start at 0
-
-        
-        
-        
-        
-        
-        # Make time column go from 0 to 1
-        internal_data[self.__time_col] = internal_data[self.__time_col] - self.__history_min_time_seconds
-        internal_data[self.__time_col] = internal_data[self.__time_col]/(self.__history_max_time_seconds - self.__history_min_time_seconds)
-        
-        
-        # Keep track of the seasonal columns' names
-        self.__seasonality_cols = []
-
-
-        # Yearly seasonality 
-        for i in range(1, self.__year_seasonality_fourier_order+1):
-            cycle_position = i*2*np.pi*internal_data['yearday']/366 # max value will be 365
-                                                                      # since values will go from 0-365
-            internal_data[f"yearly_sin_{i}"] = np.sin(cycle_position) 
-            internal_data[f"yearly_cos_{i}"] = np.cos(cycle_position)
-            self.__seasonality_cols.extend([f"yearly_sin_{i}", f"yearly_cos_{i}"])
-        
-        
-        # Monthly seasonality
-        for i in range(1, self.__month_seasonality_fourier_order+1):
-            cycle_position = i*2*np.pi*internal_data['monthday']/31 # max value will be 30 since values
-                                                                      # will go from 0 to 30
-            internal_data[f"monthly_sin_{i}"] = np.sin(cycle_position) 
-            internal_data[f"monthly_cos_{i}"] = np.cos(cycle_position)
-            self.__seasonality_cols.extend([f"monthly_sin_{i}", f"monthly_cos_{i}"])
-        
-        # Weekly seasonality
-        for i in range(1, self.__weekly_seasonality_fourier_order+1):
-            if (self.__trained_on_weekend == True):
-                cycle_position = i*2*np.pi*internal_data['weekday']/7 # max value will be 6 since values
-                                                                        # will go from 0 to 6
-            else:
-                cycle_position = i*2*np.pi*internal_data['weekday']/5 # max value will be 4 since values
-                                                                        # will go from 0 to 4
-            internal_data[f"weekly_sin_{i}"] = np.sin(cycle_position) 
-            internal_data[f"weekly_cos_{i}"] = np.cos(cycle_position) 
-            self.__seasonality_cols.extend([f"weekly_sin_{i}", f"weekly_cos_{i}"])
-                                                                      
-        
-
-        
-        # Drop the old columns, we don't need them anymore, we have the seasonal components now
-        internal_data = internal_data.drop(['weekday', 'monthday', 'yearday'], axis=1)
-
-        # Finally, grab the data and make it into tensors
-        
-        X_seasonality = torch.tensor(internal_data[self.__seasonality_cols].values , dtype=torch.float32)'''
         if (self.__target_col in internal_data.columns):
             X_dataframe = internal_data.drop(self.__target_col, axis=1)
         else:
@@ -593,9 +537,6 @@ class Chronos:
         else:
             y = None
         
-        #return X_time, X_seasonality, X_multiplicative_regressors, X_additive_regressors, y
-        
-        #return X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y
 
         
         return X_time, X_dataframe, y
@@ -609,32 +550,32 @@ class Chronos:
 
             Parameters:
             ------------
-            X_time -            A tensor of the time, expressed in seconds. The seconds
-                                need not be consecutive, or evenly spaced.
+            X_time -            [tensor] A tensor of the time, expressed in seconds. The 
+                                seconds need not be consecutive, or evenly spaced.
 
-            changepoint_num -   The number of changepoints to find
+            changepoint_num -   [int] The number of changepoints to find
 
-            changepoint_range - The range of the available times to consider. A value
-                                between 0.0 and 1.0. 0.8 means only the first 80% of 
-                                the range is considered
+            changepoint_range - [float] The range of the available times to consider. A 
+                                value between 0.0 and 1.0. 0.8 means only the first 80% 
+                                of the range is considered
 
-            min_value -         The timepoint which describes the beginning of the range
-                                where changepoints can be found. Default is None, which
-                                means the first measurement sets the beginning of the 
-                                range
+            min_value -         [int] The timepoint which describes the beginning of the
+                                range where changepoints can be found. Default is None, 
+                                which means the first measurement sets the beginning of 
+                                the range
 
-            drop_first -        Whether to drop the first measurement found. When True, 
-                                this prevents from the first measurement of being
-                                considered as a changepoint (we don't want the first
-                                second to be a changepoint usually)
+            drop_first -        [bool] Whether to drop the first measurement found. 
+                                When True, this prevents from the first measurement of
+                                being considered as a changepoint (we don't want the 
+                                first second to be a changepoint usually)
 
             Returns:
             ------------
-            changepoints -      A tensor of shape (changepoint_num, ) where each entry 
-                                is a day where a changepoint can happen. The changepoints 
-                                are chosen to be evenly spaced based on the DATE RANGE, 
-                                not the number of samples, in case samples are unevenly 
-                                spaced.
+            changepoints -      [tensor] A tensor of shape (changepoint_num, ) where each 
+                                entry is a day where a changepoint can happen. The
+                                changepoints are chosen to be evenly spaced based on the
+                                DATE RANGE, not the number of samples, in case samples
+                                are unevenly spaced.
         '''
         
         # Set the minimum value in case it is None
@@ -673,14 +614,14 @@ class Chronos:
 
             Parameters:
             ------------
-            X_time -        A tensor of the time, in days
+            X_time -        [tensor] A tensor of the time, in seconds
 
-            changepoints -  A tensor of changepoints where each element
-                            is a day when a changepoint can happen
+            changepoints -  [tensor] A tensor of changepoints where each element
+                            is a second when a changepoint can happen
 
             Returns:
             ------------
-            A -             A tensor of shape (n_samples, S), where n_samples
+            A -             [tensor] A tensor of shape (n_samples, S), where n_samples
                             is the number of samples in X_time, and S
                             is the number of changepoints
         '''
@@ -726,7 +667,7 @@ class Chronos:
             
             Returns:
             ------------
-            self -          A fitted Chronos model
+            self -          [Chronos] A fitted Chronos model
             
         '''
         # Record the time-series named columns. We will use them a lot
@@ -742,13 +683,10 @@ class Chronos:
             self.__trained_on_weekend = True
 
         
-        # Transform the data by adding seasonality
-        #X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(data)
-        
         X_time, X_dataframe, y = self.__transform_data(data)
         
         
-
+        
 
         number_of_valid_changepoints = int(X_time.shape[0] * self.__proportion_of_data_subject_to_changepoints)
         if (number_of_valid_changepoints < self.__number_of_changepoints):
@@ -762,30 +700,31 @@ class Chronos:
         
         # Find a set of evenly spaced changepoints in the training data, and 
         # buid a matrix describing the effect of the changepoints on each timepoint
-        self.__changepoints = self.__find_changepoint_positions(X_time, self.__number_of_changepoints, self.__proportion_of_data_subject_to_changepoints)
-        self.__A = self.__make_A_matrix(X_time, self.__changepoints)
+        self.__changepoints = self.__find_changepoint_positions(X_time, 
+                                                                self.__number_of_changepoints, 
+                                                                self.__proportion_of_data_subject_to_changepoints)
         
+        
+        self.__trend_components = {}
+        self.__multiplicative_components = {}
+        self.__additive_components = {}
         
         
         if (self.__method in ["MLE", "MAP"]):        # Point estimate methods
             if (self.__method == "MLE"):
                 print("Employing Maximum Likelihood Estimation")
-                self.__model = self.__model_exp #self.__model_MLE
+                self.__model = self.__model_function
                 self.__guide = self.__guide_MLE
                 self.__param_prefix = ""
                 
             elif (self.__method == "MAP"):
                 print("Employing Maximum A Posteriori")
-                self.__model = self.__model_exp
+                self.__model = self.__model_function
                 self.__guide = AutoDelta(self.__model, init_loc_fn=init_to_feasible)
                 self.__param_prefix  = "AutoDelta."
                 
-            # This raises a trace warning so we turn that off. 
-            '''with warnings.catch_warnings():
-                warnings.simplefilter("ignore")'''
-            self.__train_point_estimate(self.__model,
-                                        self.__guide,
-                                        X_time,
+
+            self.__train_point_estimate(X_time,
                                         X_dataframe,
                                         y)
         elif (self.__method == "MCMC"):
@@ -795,18 +734,10 @@ class Chronos:
 
         return self
             
-            
-    ########################################################################################################################
-    def __train_MCMC(self, model, X, y, sample_num = 3000):
-        '''
-            A function which does nothing yet
-        '''
-        pass
     
     ########################################################################################################################
-    def __train_point_estimate(self, model, guide, X_time, X_dataframe, y):
+    def __train_point_estimate(self, X_time, X_dataframe, y):
         '''
-            TODO: update inputs
             A function which takes in the model and guide to use for
             the training of point estimates of the parameters, as well as
             the regressor tensors, the changepoint matrix, and the target,
@@ -814,37 +745,15 @@ class Chronos:
 
             Parameters:
             ------------
-            model -                         [callable] A callable which defined the 
-                                            generative model which generates the data. 
-                                            Usually a function
+            X_time -        [tensor] The time tensor specifying the 
+                            time regressor
 
-            guide -                         [callable] A callable which defines all
-                                            parameters relevant to the model and how
-                                            to employ them to sample from the 
-                                            distributions in the model. 
-                                            Usually a function
+            X_dataframe -   [pd.DataFrame] A pandas dataframe containing all
+                            columns except for the target. This dataframe is
+                            included if additional regressors are requested
 
-            X_time -                        [tensor] The time tensor specifying the 
-                                            time regressor
-
-            X_seasonality -                 [tensor] The seasonality tensor specifying 
-                                            all cyclical regressors
-
-            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
-                                            be incorporated as multiplicative terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-            
-            X_additive_regressors -         [tensor] A tensor of the regressors which will
-                                            be incorporated as additive terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-
-            A -                             [tensor] The changepoint matrix defining, for
-                                            each time stamp, which changepoints occured
-
-            y -                             [tensor] The target to predict, i.e. the time
-                                            series measurements
+            y -             [tensor] The target to predict, i.e. the time
+                            series measurements
 
             Returns:
             ------------
@@ -867,8 +776,8 @@ class Chronos:
         # and Stochastic Variational Inference optimzation
         # technique
         my_loss = Trace_ELBO()
-        self.svi_ = SVI(model, 
-                        guide, 
+        self.svi_ = SVI(self.__model, 
+                        self.__guide, 
                         scheduler, 
                         loss=my_loss)
         
@@ -880,13 +789,11 @@ class Chronos:
         y_true = y.detach().numpy().copy()
         if (self.__y_max is not None):
             y_true *= self.__y_max
-
-
         
         # Create a predictive object to predict for us for
         # metric reporting purposes
-        predictive = Predictive(model=model,
-                                guide=guide,
+        predictive = Predictive(model=self.__model,
+                                guide=self.__guide,
                                 num_samples=1,
                                 return_sites=("_RETURN",)) 
         
@@ -922,7 +829,6 @@ class Chronos:
                 
                 print(" "*100, end="\r")
                 print(f"{pct_done}% - ELBO loss: {loss} | Mean Absolute Error: {mean_absolute_error_loss}", end="\r")
-                #assert(False)
         
         # Always have a final printout
         pct_done = 100.0
@@ -943,8 +849,6 @@ class Chronos:
 
             Parameters:
             ------------
-            A -                     [tensor] The changepoint matrix defining, for each time 
-                                    stamp, which changepoints occured
 
             past_deltas -           [tensor] A 1D tensor specifying the increase, or 
                                     decrease, in slope at each changepoint. The size is 
@@ -956,14 +860,11 @@ class Chronos:
                                     can be two  observations, 15 seconds apart, so the 
                                     period will be 15 seconds)
             
-
-            
             Returns:
             ------------
             deltas -                [tensor] A new 1D tensor which contains the increase, 
                                     or decrease, in slope for both past and future 
-                                    changepoints. If A is the same size as deltas coming 
-                                    in, the deltas tensor is unchanged
+                                    changepoints. 
             
         '''
         # Find the number of future changepoints in this simulation
@@ -995,7 +896,6 @@ class Chronos:
     ########################################################################################################################
     def __simulate_potential_future(self, X_time, past_deltas):
         '''
-            TODO: update input and output
             A function which simulates a potential future to account for future
             changepoints over X_time. The future may or may not contain changepoints
             and so a single run of this function simulates a potential future
@@ -1006,23 +906,13 @@ class Chronos:
             Parameters:
             ------------
             
-            X_time -            [tensor] The time tensor specifying the time regressor
+            X_time -                [tensor] The time tensor specifying the time regressor
 
 
-            past_deltas -       [tensor] A 1D tensor specifying the increase, or decrease,
-                                in slope at each changepoint. The size is (S, ) where S 
-                                is the number of changepoints in the past, and not for 
-                                the entire duration of X_time
-
-            past_changepoints - [tensor] A tensor of timestamps, of when each changepoint
-                                occurs. Only accounts for changepoints in the past
-
-            A -                 [tensor] The changepoint matrix defining, for each time 
-                                stamp, which changepoints occured. 
-                                It may get recreated during the run, but since that is
-                                probabilistic it is provided in case it need not be
-                                modified
-
+            past_deltas -           [tensor] A 1D tensor specifying the increase, or decrease,
+                                    in slope at each changepoint. The size is (S, ) where S 
+                                    is the number of changepoints in the past, and not for 
+                                    the entire duration of X_time
             
             Returns:
             ------------
@@ -1031,15 +921,10 @@ class Chronos:
             deltas -                [tensor] A 1D tensor of the rate adjustments for the
                                     entire time of X_time.
             
-            combined_changepoints - [tensor] A 1D Tensor specifing the times, where each 
+            future_changepoints -   [tensor] A 1D Tensor specifing the times, where each 
                                     changepoint occurs. May be the same size as 
                                     past_changepoints if no new changepoints have been 
                                     simulated
-            
-            A -                     [tensor] A 2D Matrix which defines how changepoints 
-                                    relate to the trend. May be different from the size 
-                                    provided when A is an input, but may remain the same, 
-                                    in which case the input matrix is returned.
             
         '''  
         # Simulate potential changepoint generation We've scaled the history so the last timestamp
@@ -1075,121 +960,71 @@ class Chronos:
             
             # Employ inverse scaling to get the values from 0.0 - 1.0 to first_future_trend_value - last_future_trend_value
             future_changepoints = random_values * (last_future_trend_value - first_future_trend_value) + first_future_trend_value
-            
-            
-            #combined_changepoints = torch.cat([past_changepoints, future_changepoints])
-
-            #A = self.__make_A_matrix(X_time, combined_changepoints)
         else:
-            #combined_changepoints = past_changepoints
             future_changepoints = torch.tensor([])
         
         return deltas, future_changepoints
 
     ########################################################################################################################
-    def __compute_trend(self, X_time, slope_init, intercept_init, A, deltas, changepoints):
-        '''
-            A function which computes the trend component of the model. i.e. the growth
-            excluding any seasonalities
-
-
-            Parameters:
-            ------------
-            
-            X_time -            [tensor] The time tensor specifying the time regressor
-
-            slope_init -        [float] The intial slope, or growth rate value
-
-            intercept_init -    [float] The intial intercept, or constant, value
-
-            A -                 [tensor] The changepoint matrix defining, for each time stamp,
-                                which changepoints occured
-
-            deltas -            [tensor] A 1D tensor specifying the increase, or decrease, in 
-                                slope at each changepoint. The size is (S, ) where S is the 
-                                number of changepoints
-
-
-            changepoints -      [tensor] A tensor of timestamps, of when each changepoint 
-                                occurs
-
-            
-            Returns:
-            ------------
-            trend -             [tensor] A 1D tensor of the trend, or growth, excluding any 
-                                seasonalities
-            
-        '''   
-
-
-        # To adjust the rates we also need to adjust the displacement during each rate change
-        intercept_adjustments = -deltas * changepoints
-
-        # There is a unique slope value and intercept value for each
-        # timepoint to create a piece-wise function
-        slope = slope_init + torch.matmul(A, deltas)
-        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
-
-
-        # Finally compute the trend component and record it in the global
-        # parameter store using the pyro.deterministic command
-        trend = slope * X_time + intercept
-        if (self.__make_likelihood_mean_positive == True):
-            trend = torch.nn.functional.softplus(trend, beta=100)
-
-        pyro.deterministic('trend', trend)
-
-
-        return trend
-
-    ########################################################################################################################
-    def __build_seasonality(self, seasonality):
-        '''
-            A function which computes the seasonality component of the model. 
-            This function simply adjusts the value in case we are using
-            multiplicative combination of trend and seasonality.
-
-
-            Parameters:
-            ------------
-            seasonality -   [tensor] The seasonality tensor computed from the seasonal
-                            coefficients
-            
-            Returns:
-            ------------
-            trend -         [tensor A 1D tensor of the seasonality, modified if the 
-                            method used is multiplication
-            
-        '''   
-
-        if (self.__seasonality_mode == "mul"):
-            seasonality = 1 + seasonality
-        
-
-        return seasonality
-    ########################################################################################################################
     def __sample_initial_slope_and_intercept(self, method):
         '''
-            TODO: update
+            A function which samples the initial values for the slope and
+            intercept. Depending on the method these could be distributions
+            or single parameters
+
+            Parameters:
+            ------------
+            method -    [str] A method describing which sampling method
+                        to employ. If MAP, the samples are from a prior
+                        distribution. If MLE, the samples are point parameters.
+
+            Returns:
+            ------------
+            return_tuple -  [tuple] A tuple of an intercept and slope;
+                            intercept_init -    [float] The value of the initial 
+                                                intercept
+                            slope_init -        [float] The value of the initial
+                                                slope 
         '''
         if (method == "MAP"):
             # Define paramters for the constant and slope
-            intercept_init = pyro.sample("intercept", dist.Normal(0.0, 10.0))
-            slope_init = pyro.sample("trend_slope", dist.Normal(0.0, 10.0))
+            intercept_init = pyro.sample("intercept", 
+                                         dist.Normal(0.0, 10.0))
+            slope_init = pyro.sample("trend_slope", 
+                                     dist.Normal(0.0, 10.0))
         elif (method == "MLE"):
-            intercept_init = pyro.param("intercept", torch.tensor(0.0))
-            slope_init = pyro.param("trend_slope", torch.tensor(0.0))
+            intercept_init = pyro.param("intercept", 
+                                        torch.tensor(0.0))
+            slope_init = pyro.param("trend_slope", 
+                                    torch.tensor(0.0))
         
         return intercept_init, slope_init
     ########################################################################################################################
     def __sample_past_slope_changes(self, method):
         '''
-            TODO: update
+            A function which samples the values for the slope changes.
+            Depending on the method these could be distributions
+            or single parameters
+
+            Parameters:
+            ------------
+            method -        [str] A method describing which sampling method
+                            to employ. If MAP, the samples are from a prior
+                            distribution. If MLE, the samples are point parameters.
+
+            Returns:
+            ------------
+            past_deltas -   [tensor] A tensor of the slope changes for the
+                            trend component.
         '''
         if (method == "MAP"):
-            # define slope change values for each changepoint
-            past_deltas = pyro.sample("delta", dist.Laplace(torch.zeros(self.__number_of_changepoints), 
-                                                            torch.full((self.__number_of_changepoints, ), self.__changepoint_prior_scale)).to_event(1))
+            # sample from a Laplace distribution
+            means = torch.zeros(self.__number_of_changepoints)
+            scales = torch.full((self.__number_of_changepoints, ), self.__changepoint_prior_scale)
+
+            slope_change_laplace_distribution = dist.Laplace(means, scales).to_event(1)
+
+            past_deltas = pyro.sample("delta", slope_change_laplace_distribution)
         elif (method == "MLE"):            
             past_deltas = pyro.param("delta", 
                                      torch.zeros(self.__number_of_changepoints))
@@ -1198,12 +1033,38 @@ class Chronos:
     ########################################################################################################################
     def __sample_seasonalities_coefficients(self, method, seasonality_component, seasonality_name):
         '''
-            TODO: update
+            A function which samples the values for the seasonality coefficients.
+            Depending on the method these could be distributions or single parameters
+
+            Parameters:
+            ------------
+            method -                [str] A method describing which sampling method
+                                    to employ. If MAP, the samples are from a prior
+                                    distribution. If MLE, the samples are point 
+                                    parameters.
+
+            seasonality_component - [tensor] The matrix of seasonality fourier
+                                    sine-cosine pairs. This matrix has an even number
+                                    of rows. Each row pair is a sine-cosine pair of
+                                    the seasonality fourier series
+
+            seasonality_name -      [str] The name of the seasonality          
+
+            Returns:
+            ------------
+            betas_seasonality - [tensor] A tensor of the coefficients for the seasonality
+                                components. For a single seasonality these are
+                                coefficients for a pair of sine-cosine fourier terms
         '''
         if (method == "MAP"):
+            # sample from a normal distribution
+            means = torch.zeros(seasonality_component.size(1))
+            standard_deviations = torch.full((seasonality_component.size(1),), 10.0)
+
+            seasonality_coefficient_normal_distribution = dist.Normal(means, standard_deviations).to_event(1)
+
             betas_seasonality = pyro.sample(f"betas_{seasonality_name}", 
-                                            dist.Normal(torch.zeros(seasonality_component.size(1)), 
-                                                        torch.full((seasonality_component.size(1),), 10.0)).to_event(1))
+                                            seasonality_coefficient_normal_distribution)
         elif (method == "MLE"):
             betas_seasonality = pyro.param(f"betas_{seasonality_name}", 
                                             torch.zeros(seasonality_component.size(1)))
@@ -1211,242 +1072,67 @@ class Chronos:
         return betas_seasonality
         
     ########################################################################################################################
-    def __sample_additional_regressors_coefficients(self, method, regressor_compoents, regressor_names):
+    def __sample_additional_regressors_coefficients(self, method, regressor_compoents, regressor_modes):
         '''
-            TODO; update
+            A function which samples the values for the additional regressor
+            coefficients. Depending on the method these could be distributions
+            or single parameters
+
+            Parameters:
+            ------------
+            method -                [str] A method describing which sampling method
+                                    to employ. If MAP, the samples are from a prior
+                                    distribution. If MLE, the samples are point parameters
+
+            regressor_compoents -   [tensor] A matrix of the additional regressors
+                                    for which coefficients are requested
+            
+            regressor_modes -       [str] The mode of regressor incorporation. 
+                                    provided for naming purposes but should be
+                                    either "mul" or "add"
+
+            Returns:
+            ------------
+            betas_regressors -      [tensor] A tensor of the coefficients for the 
+                                    additional regressor components. 
         '''
         if (method == "MAP"):
-            # Compute coefficients for the multiplicative regressors
-            betas_regressors = pyro.sample(f"betas_{regressor_names}_regressors", 
-                                            dist.Normal(torch.zeros(regressor_compoents.size(1)), 
-                                                        torch.full((regressor_compoents.size(1),), 10.0)).to_event(1))
+            means = torch.zeros(regressor_compoents.size(1))
+            standard_deviations = torch.full((regressor_compoents.size(1),), 10.0)
+
+            additional_regressor_normal_distribution = dist.Normal(means, standard_deviations).to_event(1)
+
+            # Compute coefficients for the regressors
+            betas_regressors = pyro.sample(f"betas_{regressor_modes}_regressors", 
+                                           additional_regressor_normal_distribution)
         elif (method == "MLE"):
-            betas_regressors = pyro.param(f"betas_{regressor_names}_regressors", 
+            betas_regressors = pyro.param(f"betas_{regressor_modes}_regressors", 
                                           torch.zeros(regressor_compoents.size(1)))
 
         return betas_regressors
 
     ########################################################################################################################
+    ########################################################################################################################    
     ########################################################################################################################
-    
-    def __model_MLE(self, X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, A, changepoints, y=None):  
-        '''
-            TODO: update input
-            A function which defined a linear model over the trend, seasonality, and
-            additional tensor components along with a set of potential changepoints. 
-            The model is defined simply by a set of tunable parameters with no
-            consideration for priors
-
-
-            Parameters:
-            ------------
-            
-            X_time -                        [tensor] The time tensor specifying the time 
-                                            regressor
-
-            X_seasonality -                 [tensor] The seasonality tensor specifying all
-                                            cyclical regressors
-
-            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
-                                            be incorporated as multiplicative terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-            
-            X_additive_regressors -         [tensor] A tensor of the regressors which will
-                                            be incorporated as additive terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-
-            A -                             [tensor] The changepoint matrix defining, for
-                                            each time stamp, which changepoints occured
-
-            changepoints -                  [tensor] A tensor of timestamps, in days, 
-                                            of when each changepoint occurs
-
-            y -                             [tensor] The target to predict, i.e. the time 
-                                            series  measurements. If None, the model 
-                                            generates these observations instead.
-
-            
-            Returns:
-            ------------
-            mu -                            [tensor] A tensor of the expected values to observe given
-                                            the regressor tensors and changepoints
-            
-        '''   
-        
-
-        intercept_init, slope_init = self.__sample_initial_slope_and_intercept("MLE")
-
-        past_deltas = self.__sample_past_slope_changes("MLE")
-        
-
-
-        # If no observations are given, we assume we are in
-        # prediction mode. Therefore, we have to generate possible scenarios
-        # for the future changepoints as a simulation
-        if (y is None):
-            # Poor man's verbose printing of prediction number
-            if (self.__prediction_verbose == True):
-                self.predict_counter_ += 1
-                if (self.predict_counter_ > 0):
-                    print(f"Prediction no: {self.predict_counter_}", end="\r")            
-            deltas, combined_changepoints, A = self.__simulate_potential_future(X_time, past_deltas, changepoints, A)
-        else:
-            # If we are not in prediction mode, we only care about learning the past
-            deltas = past_deltas
-            combined_changepoints = changepoints
-        
-        
-        # Compute the trend
-        trend = self.__compute_trend(X_time, slope_init, intercept_init, A, deltas, combined_changepoints)
-
-        number_of_multiplicative_components = len(X_multiplicative_seasonalities) + 1
-        multiplicative_components = torch.zeros(trend.shape[0], number_of_multiplicative_components)
-
-
-
-        # The seasonality is defined as a vector of coefficients
-        # over each seasonality component
-        index = 0
-        for multiplicative_seasonality, seasonality_info in zip(X_multiplicative_seasonalities, self.__multiplicative_seasonalities):
-            seasonality_name = seasonality_info['name']
-
-            betas_seasonality = self.__sample_seasonalities_coefficients("MLE", 
-                                                                         multiplicative_seasonality, 
-                                                                         seasonality_name)
-            
-
-            seasonal_component = multiplicative_seasonality.matmul(betas_seasonality)
-            multiplicative_components[:, index] = 1.0 + seasonal_component
-
-            index += 1
-
-
-        # Compute coefficients for the multiplicative regressors
-        betas_multiplicative_regressors = self.__sample_additional_regressors_coefficients("MLE",
-                                                                                           X_multiplicative_regressors,
-                                                                                           "mul")
-        
-        # Notice we don't do a matrix-vector product here, but rather an 
-        # row-wise multipication. The reason is we want to then find a cumulative
-        # product of all multiplicative regressors.
-        # i.e. if I have regressors reg1, reg2, and reg3, I want to multiply the trend
-        # by (reg1 * reg2 * reg3) rather than by (reg1 + reg2 + reg3)
-        multiplicative_regressors = X_multiplicative_regressors * betas_multiplicative_regressors
-
-        # The multiplicative regressors have to be adjusted so that they are larger than 1
-        # when positive, and between 0.0 and 1.0 when negative so that their multiplicative
-        # effect either dampens, or amplifies, the results, but never flips the sign
-        multiplicative_regressors = (1 + multiplicative_regressors) 
-
-        regressor_multiplicative_component = torch.prod(multiplicative_regressors, dim=1)
-        multiplicative_components[:, -1] = regressor_multiplicative_component
-        #multiplicative_components = torch.FloatTensor(multiplicative_components)
-
-        final_multiplicative_component = torch.prod(multiplicative_components, dim=1)
-
-
-
-
-        ######################################################################################
-        ######################################################################################
-        ######################################################################################
-        ######################################################################################
-
-
-
-        number_of_additive_components = len(X_additive_seasonalities) + 1
-        additive_components = torch.zeros(trend.shape[0], number_of_additive_components)
-
-
-
-        # The seasonality is defined as a vector of coefficients
-        # over each seasonality component
-        index = 0
-        for additive_seasonality, seasonality_info in zip(X_additive_seasonalities, self.__additive_seasonalities):
-            seasonality_name = seasonality_info['name']
-
-            betas_seasonality = self.__sample_seasonalities_coefficients("MLE", 
-                                                                         additive_seasonality, 
-                                                                         seasonality_name)
-            
-
-            seasonal_component = additive_seasonality.matmul(betas_seasonality)
-            additive_components[:, index] = seasonal_component
-            index += 1
-        
-
-        # Compute coefficients for the multiplicative regressors
-        betas_additive_regressors = self.__sample_additional_regressors_coefficients("MLE",
-                                                                                     X_additive_regressors,
-                                                                                     "add")
-        
-        
-        regressor_additive_component = X_additive_regressors.matmul(betas_additive_regressors)
-
-        additive_components[:, -1] = regressor_additive_component
-        
-
-        final_additive_component = torch.sum(additive_components, dim=1)
-
-        mu = trend * final_multiplicative_component + final_additive_component
-
-        if (self.__make_likelihood_mean_positive == True):
-            mu = torch.nn.functional.softplus(mu, beta=100)
-            mu = mu + torch.finfo(torch.float32).eps
-        
-
-
-        # Sample observations based on the appropriate distribution
-        mu = self.__predict_likelihood("MLE", 
-                                       self.__y_likelihood_distribution, 
-                                       mu,
-                                       y)
-
-        return mu
-
-        
-        
-        
-    ########################################################################################################################
-    #def __guide_MLE(self, X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, A, changepoints, y=None):
     def __guide_MLE(self, X_time, X_dataframe, y=None):
         '''
-            TODO: update input
             A function which specifies a special guide which does nothing.
             This guide is used in MLE optimization since there is no
             relationship between parameters and prior distributions.
-            The estimations are themselves tunable paramters (see __model_MLE)
 
             Parameters:
             ------------
             
-            X_time -                        [tensor] The time tensor specifying the time
-                                            regressor
+            X_time -        [tensor] The time tensor specifying the time
+                            regressor
 
-            X_seasonality -                 [tensor] The seasonality tensor specifying 
-                                            all cyclical regressors
+            X_dataframe -   [pd.DataFrame] A pandas dataframe containing all
+                            columns except for the target. This dataframe is
+                            included if additional regressors are requested
 
-            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
-                                            be incorporated as multiplicative terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-            
-            X_additive_regressors -         [tensor] A tensor of the regressors which will
-                                            be incorporated as additive terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-
-            A -                             [tensor] The changepoint matrix defining, for
-                                            each time stamp, which changepoints occured
-
-            changepoints -                  [tensor] A tensor of timestamps, in days, of 
-                                            when each changepoint occurs
-
-            y -                             [tensor] The target to predict, i.e. the time
-                                            series measurements. If None, the model 
-                                            generates these observations instead.
+            y -             [tensor] The target to predict, i.e. the time
+                            series measurements. If None, the model 
+                            generates these observations instead.
 
             
             Returns:
@@ -1457,91 +1143,11 @@ class Chronos:
         pass
     
     ########################################################################################################################
-    def __compute_mu(self, trend, multiplicative_component, additive_component, turn_positive=False):
-        '''
-            TODO: update input
-            A function which takes up the trend, seasonalities, and additional regressors
-            and processes them into the expected values tensor, mu.
-            If required, ensures both trend and mu are positive.
-
-            Parameters:
-            ------------
-            
-            trend -                     [tensor] The trend regressor specifying the trend
-                                        observed excluding seasonalities
-
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            turn_positive -             [bool] Whether or not the resulting mean has to 
-                                        be positive
-            
-            Returns:
-            ------------
-            mu -                        [tensor] The resulting expected value when 
-                                        combining trend and seasonality based on the
-                                        seasonality mode
-        '''
-
-        # If mu has to be positive, the trend has to be positive as well
-        if (turn_positive == True):
-            trend = torch.nn.functional.softplus(trend, beta=100)
-        
-        # make a note of the trend for easy extraction when 
-        # predicting
-        pyro.deterministic('trend', trend)
-
-        # We need to first apply multipication on the base trend, then
-        # perform addition. So first we apply all multiplicative operations
-        mu = trend
-<<<<<<< main
-        if (self.__seasonality_mode == "mul"):
-            mu  = mu * seasonality
-        if (multiplicative_regressors.shape[0] > 0):
-            # Find the product of all multiplicative regressors
-            # (e.g. reg1 * reg2 * reg3) and multiply the
-            # result by mu
-            mu = mu * torch.prod(multiplicative_regressors, dim=1)
-
-
-        # Then all additive operations
-        if (self.__seasonality_mode == "add"):
-            mu = mu + seasonality
-        if (additive_regressors.shape[0] > 0):
-            # The additive regressors have all been added before
-            # using an efficient dot product operation
-            mu = mu + additive_regressors
-    
-=======
-        mu = mu * multiplicative_component
-        mu = mu + additive_component
-        
->>>>>>> added all components that would be required by the model. model_MLE method may be pointless now
-
-        # Finally ensure the addition of seasonality does not interfere
-        # with the observed data being positive
-        if (turn_positive == True):
-            mu = torch.nn.functional.softplus(mu, beta=100)
-            mu = mu + torch.finfo(torch.float32).eps
-
-        return mu
-    
     ########################################################################################################################
     def __predict_normal_likelihood(self, method, mu, y):
         '''
-            TODO: update inputs
-            A function which takes up the trend, seasonalities, and additional regressors
-            and combines them to specify a normal distribution, conditioned on the 
+            A function which takes up the expected values and employs them
+            to specify a normal distribution, conditioned on the 
             observed data.
             An additional sigma (standard deviation) value is registered as 
             either a distribution or a parameter based on the method used
@@ -1549,31 +1155,18 @@ class Chronos:
             Parameters:
             ------------
 
-            method -                    [str] Which method is used
+            method -    [str] Which method is used. Either MAP
+                        or MLE
             
-            trend -                     [tensor] The trend regressor specifying the trend
-                                        observed excluding seasonalities
+            mu -        [tensor] The expected values computed from
+                        the model paramters
 
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
+            y -         [tensor] The observed values
             
             Returns:
             ------------
-            mu -                        [tensor] The resulting expected value when
-                                        combining trend and seasonality based on the
-                                        seasonality mode
+            mu -        [tensor] The expected values computed from
+                        the model paramters (the input mu, un-modified)
         '''
 
         
@@ -1583,8 +1176,8 @@ class Chronos:
             sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
         elif (method == "MLE"):
             sigma = pyro.param("sigma", 
-                           torch.tensor(1.0), 
-                           constraint = constraints.positive)
+                               torch.tensor(1.0), 
+                               constraint = constraints.positive)
         
          
         # Finally sample from the likelihood distribution and
@@ -1595,65 +1188,10 @@ class Chronos:
 
         return mu
     ########################################################################################################################
-    def __predict_halfnormal_likelihood(self, method, trend, multiplicative_component, additive_component, y):
-        '''
-            TODO; update input
-            A function which takes up the trend, seasonalities, and additional regressors
-            and combines them to specify a half-normal distribution, conditioned on the
-            observed data.
-            A sigma (standard deviation) value is computed
-
-            Parameters:
-            ------------
-
-            method -                    [str] Which method is used
-            
-            trend -                     [tensor] The trend regressor specifying the trend
-                                        observed excluding seasonalities
-
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
-            
-            Returns:
-            ------------
-            mu -                        [tensor] The resulting expected value when
-                                        combining trend and seasonality based on the
-                                        seasonality mode
-        '''
-
-        # Compute expected values
-        mu = self.__compute_mu(trend, multiplicative_component, additive_component, turn_positive=True)
-
-        # since mu = sigma * root(2)/root(pi)
-        # sigma = mu * root(pi)/root(2)
-        sigma = mu * ((np.pi/2)**0.5) + torch.finfo(torch.float32).eps
-        
-         
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", mu.size(0)):
-            pyro.sample("obs", dist.HalfNormal(sigma), obs=y)
-
-        return mu
-    ########################################################################################################################
     def __predict_studentT_likelihood(self, method, mu, y):
         '''
-            TODO; update input
-            A function which takes up the trend, seasonalities, and additional regressors
-            and combines them to specify a Student t-distribution, conditioned on the 
+            A function which takes up the expected values and employs them
+            to specify a Student t-distribution, conditioned on the 
             observed data.
             Additional sigma (standard deviation), and df (degrees of freedom) 
             values are registered as either distributions or parameters 
@@ -1662,31 +1200,18 @@ class Chronos:
             Parameters:
             ------------
 
-            method -                    [str] Which method is used
+            method -    [str] Which method is used. Either MAP
+                        or MLE
             
-            trend -                     [tensor] The trend regressor specifying the trend
-                                        observed excluding seasonalities
+            mu -        [tensor] The expected values computed from
+                        the model paramters
 
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
+            y -         [tensor] The observed values
             
             Returns:
             ------------
-            mu -                        [tensor] The resulting expected value when 
-                                        combining trend and seasonality based on the
-                                        seasonality mode
+            mu -        [tensor] The expected values computed from
+                        the model paramters (the input mu, un-modified)
         '''
         
 
@@ -1697,8 +1222,9 @@ class Chronos:
             df = pyro.sample("df", dist.HalfCauchy(1.0))
         elif (method == "MLE"):
             sigma = pyro.param("sigma", 
-                           torch.tensor(1.0), 
-                           constraint = constraints.positive)
+                               torch.tensor(1.0), 
+                               constraint = constraints.positive)
+
             df = pyro.param("df", 
                             torch.tensor(1.0), 
                             constraint = constraints.positive)
@@ -1713,9 +1239,8 @@ class Chronos:
     ########################################################################################################################
     def __predict_gamma_likelihood(self, method, mu, y):
         '''
-            TODO; update input
-            A function which takes up the trend, seasonalities, and additional regressors
-            and combines them to specify a gamma distribution, conditioned on the 
+            A function which takes up the expected values and employs them
+            to specify a gamma distribution, conditioned on the 
             observed data.
             An additional rate value is registered as either a distribution 
             or a parameter based on the method used, and a shape tensor
@@ -1724,38 +1249,24 @@ class Chronos:
             Parameters:
             ------------
 
-            method -                    [str] Which method is used
+            method -    [str] Which method is used. Either MAP
+                        or MLE
             
-            trend -                     [tensor] The trend regressor specifying the trend
-                                        observed excluding seasonalities
+            mu -        [tensor] The expected values computed from
+                        the model paramters
 
-            seasonality -               [tensor] The seasonality tensor specifying all 
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
+            y -         [tensor] The observed values
             
             Returns:
             ------------
-            mu -                        [tensor] The resulting expected value when
-                                        combining trend and seasonality based on the
-                                        seasonality mode
+            mu -        [tensor] The expected values computed from
+                        the model paramters (the input mu, un-modified)
         '''
 
         # Define additional paramters specifying the likelihood
         # distribution. 
         if (method == "MAP"):
             rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
-            #shape = pyro.sample("shape", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
         elif (method == "MLE"):
             rate = pyro.param("rate", 
                               torch.tensor(1.0), 
@@ -1775,62 +1286,9 @@ class Chronos:
 
         return mu
     ########################################################################################################################
-    def __predict_poisson_likelihood(self, method, trend, multiplicative_component, additive_component, y):
-        '''
-            TODO; update input
-            A function which takes up the trend, seasonalities, and additional regressors
-            and combines them to specify a Poisson distribution, conditioned on the 
-            observed data.
-            A rate tensor is computed based on the expected values.
-
-            Parameters:
-            ------------
-
-            method -                    [str] Which method is used
-            
-            trend -                     [tensor] The trend regressor specifying the
-                                        trend observed excluding seasonalities
-
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
-            
-            Returns:
-            ------------
-            mu -                        [tensor] The resulting expected value when
-                                        combining trend and seasonality based on the 
-                                        seasonality mode
-        '''
-
-        # Compute expected values
-        mu = self.__compute_mu(trend, multiplicative_component, additive_component, turn_positive=True)
-
-
-        rate = mu
-         
-        
-        # Finally sample from the likelihood distribution and
-        # optionally condition on the observed values. 
-        # If y is None, this simply samples from the distribution
-        with pyro.plate("data", mu.size(0)):
-            pyro.sample("obs", dist.Poisson(rate=rate), obs=y)
-
-        return mu
     ########################################################################################################################    
     def __predict_likelihood(self, method, distribution, mu, y):
         '''
-            TODO: edit input
             A function which takes up the trend, seasonalities, and additional regressors
             and combines them to form the expected values, then conditions them
             on the observed data based on the distribution requested
@@ -1838,34 +1296,20 @@ class Chronos:
             Parameters:
             ------------
 
-            method -                    [str] Which method is used
+            method -        [str] Which method is used
 
-            distribution -              [str] Which distribution to use. Must be one
-                                        of the distributions specified in chronos_utils
+            distribution -  [str] Which distribution to use. Must be one
+                            of the distributions specified in chronos_utils
             
-            trend -                     [tensor] The trend regressor specifying the 
-                                        trend observed excluding seasonalities
+            mu -            [tensor] The expected values computed from
+                            the model paramters
 
-            seasonality -               [tensor] The seasonality tensor specifying all
-                                        cyclical regressors
-
-            multiplicative_regressors - [tensor] A tensor of the regressors which will
-                                        be incorporated as multiplicative terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-            
-            additive_regressors -       [tensor] A tensor of the regressors which will
-                                        be incorporated as additive terms.
-                                        Can be an empty tensor if no such regressors
-                                        exist.
-
-            y -                         [tensor] The observed values
+            y -             [tensor] The observed values
             
             Returns:
             ------------
-            mu -                        [tensor] The resulting expected value when
-                                        combining trend and seasonality based on the 
-                                        seasonality mode
+            mu -            [tensor] The expected values computed from
+                            the model paramters (the input mu, un-modified)
         '''
 
         if (distribution == chronos_utils.Normal_dist_code):
@@ -1876,9 +1320,15 @@ class Chronos:
             return self.__predict_gamma_likelihood(method, mu, y)
         
     ########################################################################################################################    
-    def __compute_trend_exp(self, X_time, y):
+    def __compute_trend(self, X_time, y):
         '''
             TODO: update
+            A function
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
 
 
@@ -1929,6 +1379,11 @@ class Chronos:
     def __compute_multiplicative_seasonalities_product(self, X_date):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
         total_seasonalities_product = torch.ones(X_date.shape[0], )
 
@@ -1965,6 +1420,11 @@ class Chronos:
     def __compute_multiplicative_regressors_product(self, X_dataframe):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
         for additional_regressor in self.__multiplicative_additional_regressors:
             if (additional_regressor not in X_dataframe.columns):
@@ -1995,18 +1455,23 @@ class Chronos:
         return multiplicative_regressors_product
     ########################################################################################################################
     ########################################################################################################################    
-    def __compute_multiplicative_component_exp(self, X_dataframe):
+    def __compute_multiplicative_component(self, X_dataframe):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
 
         X_date = X_dataframe[self.__time_col]
 
-        total_seasonalities_product = self.__compute_multiplicative_seasonalities_product(X_date)
+        multiplicative_seasonalities_product = self.__compute_multiplicative_seasonalities_product(X_date)
 
         multiplicative_regressors_product = self.__compute_multiplicative_regressors_product(X_dataframe)
 
-        multiplicative_component = total_seasonalities_product * multiplicative_regressors_product
+        multiplicative_component = multiplicative_seasonalities_product * multiplicative_regressors_product
 
         return multiplicative_component
     ########################################################################################################################
@@ -2016,6 +1481,11 @@ class Chronos:
     def __compute_additive_seasonalities_sum(self, X_date):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
         total_seasonalities_sum = torch.zeros(X_date.shape[0], )
 
@@ -2051,6 +1521,11 @@ class Chronos:
     def __compute_additive_regressors_sum(self, X_dataframe):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
         for additional_regressor in self.__additive_additional_regressors:
             if (additional_regressor not in X_dataframe.columns):
@@ -2070,32 +1545,42 @@ class Chronos:
 
         return additive_regressors_sum
     ########################################################################################################################
-    def __compute_additive_component_exp(self, X_dataframe):
+    def __compute_additive_component(self, X_dataframe):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
 
         X_date = X_dataframe[self.__time_col]
 
-        total_seasonalities_sum = self.__compute_additive_seasonalities_sum(X_date)
+        additive_seasonalities_sum = self.__compute_additive_seasonalities_sum(X_date)
 
         additive_regressors_sum = self.__compute_additive_regressors_sum(X_dataframe)
 
-        additive_component = total_seasonalities_sum + additive_regressors_sum
+        additive_component = additive_seasonalities_sum + additive_regressors_sum
 
         return additive_component
     ########################################################################################################################    
     ########################################################################################################################    
-    def __model_exp(self, X_time, X_dataframe, y=None):
+    def __model_function(self, X_time, X_dataframe, y=None):
         '''
             TODO: update
+            Parameters:
+            ------------
+
+            Returns:
+            ------------
         '''
 
-        trend = self.__compute_trend_exp(X_time, y)
+        trend = self.__compute_trend(X_time, y)
 
-        multiplicative_component = self.__compute_multiplicative_component_exp(X_dataframe)
+        multiplicative_component = self.__compute_multiplicative_component(X_dataframe)
 
-        additive_component = self.__compute_additive_component_exp(X_dataframe)
+        additive_component = self.__compute_additive_component(X_dataframe)
 
         mu = (trend * multiplicative_component) + additive_component
 
@@ -2113,192 +1598,6 @@ class Chronos:
 
 
     ########################################################################################################################    
-    def __model_MAP(self, X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, A, changepoints, y=None):
-        '''
-            TODO: update inputs
-            A function which defined a linear model over the trend, seasonality and
-            additional components along with a set of potential changepoints. 
-            The model is defined by a set of prior distributions over the values.
-
-
-            Parameters:
-            ------------
-            
-            X_time -                        [tensor] The time tensor specifying the time
-                                            regressor
-
-            X_seasonality -                 [tensor] The seasonality tensor specifying 
-                                            all cyclical regressors
-
-            X_multiplicative_regressors -   [tensor] A tensor of the regressors which will
-                                            be incorporated as multiplicative terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-            
-            X_additive_regressors -         [tensor] A tensor of the regressors which will
-                                            be incorporated as additive terms.
-                                            Can be an empty tensor if no such regressors
-                                            exist.
-
-            A -                             [tensor] The changepoint matrix defining, for
-                                            each time stamp, which changepoints occured.
-                                            If the function is run in prediction mode 
-                                            (where y is None), this matrix may be 
-                                            recreated within the function. Since the
-                                            recreation is non-deterministic, the matrix
-                                            is provided for the cases where it won't have
-                                            to be recreated.
-
-            changepoints -                  [tensor] A tensor of timestamps of when each 
-                                            changepoint occurs
-
-            y -                             [tensor] The target to predict, i.e. the 
-                                            time series measurements. If None, the model
-                                            generates these observations instead.
-
-            
-            Returns:
-            ------------
-            mu -                            [tensor] A tensor of the expected values to
-                                            observe given the regressor tensors and 
-                                            changepoints
-            
-        '''
-        
-        intercept_init, slope_init = self.__sample_initial_slope_and_intercept("MAP")
-
-        past_deltas = self.__sample_past_slope_changes("MAP")
-        
-
-        
-        # If no observations are given, we assume we are in
-        # prediction mode. Therefore, we have to generate possible scenarios
-        # for the future changepoints as a simulation
-        if (y is None):
-            # Poor man's verbose printing of prediction number
-            if (self.__prediction_verbose == True):
-                self.predict_counter_ += 1
-                if (self.predict_counter_ > 0):
-                    print(f"Prediction no: {self.predict_counter_}", end="\r") 
-                       
-            deltas, combined_changepoints, A = self.__simulate_potential_future(X_time, past_deltas, changepoints, A)
-        else:
-            # If we are not in prediction mode, we only care about learning the past
-            deltas = past_deltas
-            combined_changepoints = changepoints
-        
-        # Compute the trend
-        trend = self.__compute_trend(X_time, slope_init, intercept_init, A, deltas, combined_changepoints)
-        
-
-
-
-        number_of_multiplicative_components = len(X_multiplicative_seasonalities) + 1
-        multiplicative_components = torch.zeros(trend.shape[0], number_of_multiplicative_components)
-
-
-
-        # The seasonality is defined as a vector of coefficients
-        # over each seasonality component
-        index = 0
-        for multiplicative_seasonality, seasonality_info in zip(X_multiplicative_seasonalities, self.__multiplicative_seasonalities):
-            seasonality_name = seasonality_info['name']
-
-            betas_seasonality = self.__sample_seasonalities_coefficients("MAP", 
-                                                                         multiplicative_seasonality, 
-                                                                         seasonality_name)
-            
-
-            seasonal_component = multiplicative_seasonality.matmul(betas_seasonality)
-            multiplicative_components[:, index] = 1.0 + seasonal_component
-
-            index += 1
-
-
-        # Compute coefficients for the multiplicative regressors
-        betas_multiplicative_regressors = self.__sample_additional_regressors_coefficients("MAP",
-                                                                                           X_multiplicative_regressors,
-                                                                                           "mul")
-        
-        # Notice we don't do a matrix-vector product here, but rather an 
-        # row-wise multipication. The reason is we want to then find a cumulative
-        # product of all multiplicative regressors.
-        # i.e. if I have regressors reg1, reg2, and reg3, I want to multiply the trend
-        # by (reg1 * reg2 * reg3) rather than by (reg1 + reg2 + reg3)
-        multiplicative_regressors = X_multiplicative_regressors * betas_multiplicative_regressors
-
-        # The multiplicative regressors have to be adjusted so that they are larger than 1
-        # when positive, and between 0.0 and 1.0 when negative so that their multiplicative
-        # effect either dampens, or amplifies, the results, but never flips the sign
-        multiplicative_regressors = (1 + multiplicative_regressors) 
-
-        regressor_multiplicative_component = torch.prod(multiplicative_regressors, dim=1)
-        multiplicative_components[:, -1] = regressor_multiplicative_component
-        #multiplicative_components = torch.FloatTensor(multiplicative_components)
-
-        final_multiplicative_component = torch.prod(multiplicative_components, dim=1)
-
-
-
-
-        ######################################################################################
-        ######################################################################################
-        ######################################################################################
-        ######################################################################################
-
-
-
-        number_of_additive_components = len(X_additive_seasonalities) + 1
-        additive_components = torch.zeros(trend.shape[0], number_of_additive_components)
-
-
-
-        # The seasonality is defined as a vector of coefficients
-        # over each seasonality component
-        index = 0
-        for additive_seasonality, seasonality_info in zip(X_additive_seasonalities, self.__additive_seasonalities):
-            seasonality_name = seasonality_info['name']
-
-            betas_seasonality = self.__sample_seasonalities_coefficients("MAP", 
-                                                                         additive_seasonality, 
-                                                                         seasonality_name)
-            
-
-            seasonal_component = additive_seasonality.matmul(betas_seasonality)
-            additive_components[:, index] = seasonal_component
-            index += 1
-        
-
-        # Compute coefficients for the multiplicative regressors
-        betas_additive_regressors = self.__sample_additional_regressors_coefficients("MAP",
-                                                                                     X_additive_regressors,
-                                                                                     "add")
-        
-        
-        regressor_additive_component = X_additive_regressors.matmul(betas_additive_regressors)
-
-        additive_components[:, -1] = regressor_additive_component
-        
-
-        final_additive_component = torch.sum(additive_components, dim=1)
-
-        mu = trend * final_multiplicative_component + final_additive_component
-
-        if (self.__make_likelihood_mean_positive == True):
-            mu = torch.nn.functional.softplus(mu, beta=100)
-            mu = mu + torch.finfo(torch.float32).eps
-        
-
-
-        # Sample observations based on the appropriate distribution
-        mu = self.__predict_likelihood("MAP", 
-                                       self.__y_likelihood_distribution, 
-                                       mu,
-                                       y)
-
-        return mu
-    
-    
     ########################################################################################################################
     def predict(self, 
                 future_df=None, 
@@ -2393,12 +1692,8 @@ class Chronos:
 
 
         # Transform data into trend and seasonality as before
-        #X_time, X_multiplicative_seasonalities, X_additive_seasonalities, X_multiplicative_regressors, X_additive_regressors, y = self.__transform_data(future_df)
         X_time, X_dataframe, y = self.__transform_data(future_df)
         
-        # Create changepoint matrix for historical changepoints, in case we need no
-        # new changepoints
-        A = self.__make_A_matrix(X_time, self.__changepoints)
 
         self.predict_counter_ = -2
 
@@ -2627,11 +1922,7 @@ class Chronos:
             Parameters:
             ------------
             param_name -            [str] The name of the global param store where
-                                    seasonality is stored.  
-
-            seasonality_name -      [str] The name of the required seasonality. e.g.
-                                    "weekly" or "monthly"
-
+                                    the specific seasonality is stored.  
             
             Returns:
             ------------
@@ -2644,14 +1935,6 @@ class Chronos:
 
         seasonal_params = []
 
-        #for param in pyro.get_param_store():
-        #    print(param)
-
-        #print(param_name)
-
-        # Go through all coefficients in param_name and find
-        # those that correspond to the seasonality columns
-        # created for this data
         for param in pyro.param(param_name):
             seasonal_params.append(param.item())
 
