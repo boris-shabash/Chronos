@@ -1165,8 +1165,7 @@ class Chronos:
             
             Returns:
             ------------
-            mu -        [tensor] The expected values computed from
-                        the model paramters (the input mu, un-modified)
+            None
         '''
 
         
@@ -1186,7 +1185,7 @@ class Chronos:
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.Normal(mu, sigma), obs=y)
 
-        return mu
+        
     ########################################################################################################################
     def __predict_studentT_likelihood(self, method, mu, y):
         '''
@@ -1210,8 +1209,7 @@ class Chronos:
             
             Returns:
             ------------
-            mu -        [tensor] The expected values computed from
-                        the model paramters (the input mu, un-modified)
+            None
         '''
         
 
@@ -1235,7 +1233,7 @@ class Chronos:
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
 
-        return mu
+        
     ########################################################################################################################
     def __predict_gamma_likelihood(self, method, mu, y):
         '''
@@ -1259,8 +1257,7 @@ class Chronos:
             
             Returns:
             ------------
-            mu -        [tensor] The expected values computed from
-                        the model paramters (the input mu, un-modified)
+            None
         '''
 
         # Define additional paramters specifying the likelihood
@@ -1284,7 +1281,7 @@ class Chronos:
         with pyro.plate("data", mu.size(0)):
             pyro.sample("obs", dist.Gamma(concentration=shape, rate=rate), obs=y_obs)
 
-        return mu
+        
     ########################################################################################################################
     ########################################################################################################################    
     def __predict_likelihood(self, method, distribution, mu, y):
@@ -1308,16 +1305,15 @@ class Chronos:
             
             Returns:
             ------------
-            mu -            [tensor] The expected values computed from
-                            the model paramters (the input mu, un-modified)
+            None
         '''
 
         if (distribution == chronos_utils.Normal_dist_code):
-            return self.__predict_normal_likelihood(method, mu, y)
+            self.__predict_normal_likelihood(method, mu, y)
         elif (distribution == chronos_utils.StudentT_dist_code):
-            return self.__predict_studentT_likelihood(method, mu, y)
+            self.__predict_studentT_likelihood(method, mu, y)
         elif (distribution == chronos_utils.Gamma_dist_code):
-            return self.__predict_gamma_likelihood(method, mu, y)
+            self.__predict_gamma_likelihood(method, mu, y)
         
     ########################################################################################################################
     def __compute_changepoint_positions_and_values(self, X_time, y):
@@ -1666,14 +1662,37 @@ class Chronos:
     ########################################################################################################################    
     def __model_function(self, X_time, X_dataframe, y=None):
         '''
-            TODO: update
+            The major powerhouse function of this object, performs the modeling of
+            the generative process which generates y from X_dataframe and X_time.
+            Returns the expected values given the regressors and the learned 
+            parameters.
+
+
             Parameters:
             ------------
+            X_time -        [tensor] A tensor of time values, normalized. If
+                            we are training, this will contain values between 0.0
+                            and 1.0. Otherwise, it will contain values normalized to
+                            reflect the range of the training data (i.e. from 1.0 unward
+                            if it contains only future times, and from 0.0 to 1.0 and 
+                            unward if it contains both past and future times).
+
+            X_dataframe -   [pd.DataFrame] A pandas dataframe which contains the
+                            raw data passed into this Chronos object. Used to
+                            compute seasonality and additional regressors
+
+            y -             [tesnor] A tensor of the observaed values, normalized to
+                            the range 0.0 - 1.0, if we are training, or a None object
+                            if we are predicting.
 
             Returns:
             ------------
+            mu -            [tensor] A tensor of the expected values given X_dataframe
+                            and the learned parameters. 
         '''
-        if (y is None):
+
+        prediction_mode = y is None
+        if (prediction_mode):
             # Poor man's verbose printing of prediction number
             if (self.__prediction_verbose == True):
                 self.predict_counter_ += 1
@@ -1687,17 +1706,20 @@ class Chronos:
 
         additive_component = self.__compute_additive_component(X_dataframe)
 
+
+
         mu = (trend * multiplicative_component) + additive_component
 
         if (self.__make_likelihood_mean_positive == True):
             mu = torch.nn.functional.softplus(mu, beta=100)
             mu = mu + torch.finfo(torch.float32).eps
 
+
         # Sample observations based on the appropriate distribution
-        mu = self.__predict_likelihood(self.__method, 
-                                       self.__y_likelihood_distribution, 
-                                       mu,
-                                       y)
+        self.__predict_likelihood(self.__method, 
+                                  self.__y_likelihood_distribution, 
+                                  mu,
+                                  y)
 
         return mu
 
@@ -1799,6 +1821,9 @@ class Chronos:
         X_time, X_dataframe, y = self.__transform_data(future_df)
         
 
+        # For some reason the predictive method runs for 2 extra runs
+        # so we need to set the counter to -2 to tell the predictive method
+        # when to start printing out output
         self.predict_counter_ = -2
 
         self.__trend_components = {}
