@@ -198,54 +198,183 @@ class Chronos:
         '''
 
         
+        self.__method = self.__check_is_string_supported(method, 
+                                                         "method", 
+                                                         chronos_utils.SUPPORTED_METHODS)
+        self.__seasonality_mode = self.__check_is_string_supported(seasonality_mode, 
+                                                                   "seasonality_mode", 
+                                                                   ["add", "mul"])
+        self.__y_likelihood_distribution = self.__check_is_string_supported(distribution, 
+                                                                            "distribution", 
+                                                                            chronos_utils.SUPPORTED_DISTRIBUTIONS)
         
-        if (method not in chronos_utils.SUPPORTED_METHODS):
-            raise ValueError(f"Method {method} is not supported. The only supported methods are {chronos_utils.SUPPORTED_METHODS}")
-        else:
-            self.__method = method
 
-        if (not isinstance(max_iter, int)):
-            raise TypeError(f"max_iter must be a positive integer")
-        elif (max_iter <= 0):
-            raise ValueError(f"max_iter must be a positive integer")
-        else:
-            self.__number_of_iterations = max_iter
+        self.__number_of_changepoints = self.__check_is_supported_integer(n_changepoints, 
+                                                                          "n_changepoints", 
+                                                                          positive=False)        
+        self.__year_seasonality_fourier_order = self.__check_is_supported_integer(year_seasonality_order, 
+                                                                                  "year_seasonality_order", 
+                                                                                  positive=False)
+        self.__weekly_seasonality_fourier_order = self.__check_is_supported_integer(weekly_seasonality_order, 
+                                                                                    "weekly_seasonality_order", 
+                                                                                    positive=False)
+        self.__month_seasonality_fourier_order = self.__check_is_supported_integer(month_seasonality_order, 
+                                                                                   "month_seasonality_order", 
+                                                                                   False)
+        self.__number_of_iterations  = self.__check_is_supported_integer(max_iter, 
+                                                                        "max_iter", 
+                                                                        positive=True)
 
 
-        self.__learning_rate = learning_rate
-        self.__number_of_changepoints = n_changepoints
-        self.__proportion_of_data_subject_to_changepoints  = changepoint_range
+        self.__learning_rate = self.__check_is_supported_float(learning_rate, 
+                                                               "learning_rate", 
+                                                               positive=True)
+        self.__changepoint_prior_scale = self.__check_is_supported_float(changepoint_prior_scale, 
+                                                                         "changepoint_prior_scale", 
+                                                                         positive=True)
+        self.__proportion_of_data_subject_to_changepoints = self.__check_is_supported_float(changepoint_range, 
+                                                                                            "changepoint_range", 
+                                                                                            positive=False)
 
 
-        self.__changepoint_prior_scale = changepoint_prior_scale
         
-        
-        self.__year_seasonality_fourier_order = year_seasonality_order
-        self.__weekly_seasonality_fourier_order = weekly_seasonality_order
-        self.__month_seasonality_fourier_order = month_seasonality_order
-
-        self.__seasonality_mode = seasonality_mode
-
-
         self.__y_max = None
         self.__history_min_time_seconds = None
         self.__history_max_time_seconds = None
         self.__prediction_verbose = False
 
-        self.__additive_additional_regressors = []
+        
+        self.__multiplicative_seasonalities = []
         self.__multiplicative_additional_regressors = []
 
         self.__additive_seasonalities = []
-        self.__multiplicative_seasonalities = []
-
-        self.__seasonality_cols = []
-        
+        self.__additive_additional_regressors = []
 
 
         self.__reserved_names = [f"trend{suffix}" for suffix in ["", "_upper", "_lower"]]
         self.__reserved_names.extend([f"yhat{suffix}" for suffix in ["", "_upper", "_lower"]])
 
 
+        self.__add_default_seasonalities()
+
+        # Some distributions will require extra work to ensure the 
+        # parameters fed in are positive
+        if (self.__y_likelihood_distribution in chronos_utils.POSITIVE_DISTRIBUTIONS):
+            self.__make_likelihood_mean_positive = True
+        else:
+            self.__make_likelihood_mean_positive = False
+        
+    ########################################################################################################################
+    def __check_is_string_supported(self, variable, variable_name, options):
+        '''
+            Checks if the string supplied is one of the options, and throws
+            a value error if it is not
+
+            Parameters:
+            ------------
+            variable -      [str] A string which is the value
+
+            variable_name - [str] A string which is the variable name. Is included
+                            for output purposes
+
+            options -       [list] A list of strings which contains the available
+                            options for the given variable
+
+            Returns:
+            ------------
+            variable -      [str] The inputted variable, unmodified, if no errors
+                            occured
+        '''
+        if (variable not in options):
+            raise ValueError(f"A value of {variable} for {variable_name} is not supported. Supported values are: {options}")
+        else:
+            return variable
+    ########################################################################################################################
+    def __check_is_supported_float(self, variable, variable_name, positive=True):
+        '''
+            Checks if the float provided is supported, and throws an error if it
+            is not
+
+            Parameters:
+            ------------
+            variable -      [float] An integer which is the value
+
+            variable_name - [str] A string which is the variable name. Is included
+                            for output purposes
+
+            positive -      [bool] A flag denoting if only positive values are
+                            supported or all non-negatives are
+
+            Returns:
+            ------------
+            variable -      [float] The inputted variable, unmodified, if no errors
+                            occured
+        '''
+
+        if (positive == True):
+            error_message = f"{variable_name} must be a positive float"
+        else:
+            error_message = f"{variable_name} must be a non-negative float"
+
+        if (not isinstance(variable, float)):
+            raise TypeError(error_message)
+        elif (positive == True):
+            if (variable <= 0.0):
+                raise ValueError(error_message)
+        elif (positive == False):
+            if (variable < 0.0):
+                raise ValueError(error_message)
+        
+        return variable
+    ########################################################################################################################
+    def __check_is_supported_integer(self, variable, variable_name, positive=True):
+        '''
+            Checks if the integer provided is supported, and throws an error if it
+            is not
+
+            Parameters:
+            ------------
+            variable -      [int] An integer which is the value
+
+            variable_name - [str] A string which is the variable name. Is included
+                            for output purposes
+
+            positive -      [bool] A flag denoting if only positive values are
+                            supported or all non-negatives are
+
+            Returns:
+            ------------
+            variable -      [int] The inputted variable, unmodified, if no errors
+                            occured
+        '''
+        if (positive == True):
+            error_message = f"{variable_name} must be a positive integer"
+        else:
+            error_message = f"{variable_name} must be a non-negative integer"
+
+        if (not isinstance(variable, int)):
+            raise TypeError(error_message)
+        elif (positive == True):
+            if (variable <= 0):
+                raise ValueError(error_message)
+        elif (positive == False):
+            if (variable < 0):
+                raise ValueError(error_message)
+        
+        return variable
+    ########################################################################################################################
+    def __add_default_seasonalities(self):
+        '''
+            A function to add the built-in default seasonalities
+
+            Parameters:
+            ------------
+            None
+
+            Returns:
+            ------------
+            None
+        '''
         self.add_seasonality("yearly", 
                              self.__year_seasonality_fourier_order, 
                              self.__yearly_cycle_extraction_function,
@@ -260,20 +389,7 @@ class Chronos:
                              self.__weekly_seasonality_fourier_order, 
                              self.__weekly_cycle_extraction_function,
                              self.__seasonality_mode)
-
-
-
-        if (distribution not in chronos_utils.SUPPORTED_DISTRIBUTIONS):
-            raise ValueError(f"Distribution {distribution} is not supported. Supported distribution names are: {chronos_utils.SUPPORTED_DISTRIBUTIONS}")
-        else:
-            self.__y_likelihood_distribution = distribution
-
-        if (self.__y_likelihood_distribution in chronos_utils.POSITIVE_DISTRIBUTIONS):
-            self.__make_likelihood_mean_positive = True
-        else:
-            self.__make_likelihood_mean_positive = False
-        
-    ######################################################################################################################## 
+    ########################################################################################################################
     def __is_regressor_name_available(self, regressor_name):
         '''
             A function which checks to see if the regressor name is available.
@@ -642,6 +758,36 @@ class Chronos:
         return A
 
     ########################################################################################################################
+    def __check_incoming_data_for_nulls(self, data, predictions=False):
+        '''
+            Checks incoming data for null values and advises the user what to
+            do
+
+            Parameters:
+            ------------
+            data -          [pd.DataFrame] - A pandas dataframe which contains
+                            the incoming data
+
+            predictions -   [bool] A flag which determines if we are in prediction
+                            mode. If we are, we don't care about the target column
+                            containing null values since we won't be using it
+
+            Returns:
+            ------------
+            None
+        '''
+
+        if (data[self.__target_col].isna().sum() > 0):
+            if (predictions == False):
+                raise ValueError(f"{self.__target_col} contains null values, which Chronos cannot process. Consider either removing the null values, or setting them as 0, whichever makes more sense for your data")
+        elif (data[self.__time_col].isna().sum() > 0):
+            raise ValueError(f"{self.__time_col} contains null values, which Chronos cannot process. Consider removing these values")
+        else:
+            for col in data.columns:
+                if (col not in [self.__time_col, self.__target_col]):
+                    if (data[col].isna().sum() > 0):
+                        raise ValueError(f"{col} contains null values, which Chronos cannot process. Consider removing these values")
+    ########################################################################################################################
     def fit(self, data, time_col = "ds", target_col="y"):
         '''
             A function which performs fitting of the required method on the data provided,
@@ -674,6 +820,8 @@ class Chronos:
         self.__time_col = time_col
         self.__target_col = target_col
         
+        self.__check_incoming_data_for_nulls(data, predictions=False)
+
         # Make a copy of the history
         self.history = data.copy()
         if (self.history[self.__time_col].dt.day_name().isin(["Sunday", "Saturday"]).any() == False):
@@ -681,6 +829,8 @@ class Chronos:
             self.__trained_on_weekend = False
         else:
             self.__trained_on_weekend = True
+
+        
 
         
         X_time, X_dataframe, y = self.__transform_data(data)
@@ -1809,13 +1959,17 @@ class Chronos:
                                 incorporated when computing yhat.
             
         '''
+        
+        
+
         self.__prediction_verbose = verbose
         # Make a future dataframe if one is not provided
-        if (future_df is None):
+        if (future_df is None):            
             future_df = self.make_future_dataframe(period=period, 
                                                    frequency=frequency, 
                                                    include_history=include_history)
-
+                                                   
+        self.__check_incoming_data_for_nulls(future_df, predictions=True)
 
         # Transform data into trend and seasonality as before
         X_time, X_dataframe, y = self.__transform_data(future_df)
