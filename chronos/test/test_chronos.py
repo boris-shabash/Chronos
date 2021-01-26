@@ -157,7 +157,7 @@ def test_prediction_no_changepoints(sample_data):
 
         predictions = my_chronos.predict(sample_number=2000, period=30, frequency='D')
 
-        assert(my_chronos._Chronos__n_changepoints == 0)
+        assert(my_chronos._Chronos__number_of_changepoints == 0)
 
 ######################################################################
 
@@ -176,7 +176,7 @@ def test_prediction_too_small_for_default_changepoints(sample_data):
         future_df = my_chronos.make_future_dataframe()
         predictions = my_chronos.predict(future_df)
 
-        assert(my_chronos._Chronos__n_changepoints < sample_data.shape[0])
+        assert(my_chronos._Chronos__number_of_changepoints < sample_data.shape[0])
 
 ######################################################################
 
@@ -228,4 +228,67 @@ def test_prediction_with_easy_extra_regressors(sample_data):
 
             # The predictions should be almost the same as the target
             assert(np.mean(np.abs(predictions['y'] - predictions['yhat'])) < 0.1)
+
+######################################################################
+def test_error_for_nan_values(sample_data):
+    '''
+        Tests that Chronos complains when given
+        nan values to fit on, but not to predict on
+    '''
+
+    def add_dummy_regressors(data):
+
+        z = data.index.values
+        y = 0.01 * z + np.sin(z/30)
+        data['y'] = y
+    
+        # should be easy since the target is just dummy1 + dummy2
+        dummy1 = 0.01 * z
+        dummy2 = np.sin(z/30)
+        data['dummy1'] = dummy1
+        data['dummy2'] = dummy2
+
+        return data
+
+    sample_data = add_dummy_regressors(sample_data)
+
+    
+    my_chronos = Chronos(max_iter=200)
+
+    # add dummies
+    my_chronos.add_regressors("dummy1")
+    my_chronos.add_regressors("dummy2")
+
+    # check nan values fail for all columns
+    for col in ['ds', 'y', 'dummy1', 'dummy2']:
+        sample_data_with_nans = sample_data.copy()
+        sample_data_with_nans.loc[0, col] = np.nan
+
+        with pytest.raises(ValueError):
+            my_chronos.fit(sample_data_with_nans)
+
+    # check original data works
+    my_chronos.fit(sample_data)
+
+
+    future_df = my_chronos.make_future_dataframe()
+    future_df = add_dummy_regressors(future_df)
+
+    # check nan values fail for all columns EXCEPT
+    # the target column when making predictions
+    for col in ['ds', 'y', 'dummy1', 'dummy2']:
+        future_df_with_nans = future_df.copy()
+        future_df_with_nans.loc[0, col] = np.nan
+        if (col == 'y'):
+            predictions = my_chronos.predict(future_df_with_nans)
+        else:
+            with pytest.raises(ValueError):
+                predictions = my_chronos.predict(future_df_with_nans)
+                
+
+    
+
+######################################################################
+######################################################################
+######################################################################
 
