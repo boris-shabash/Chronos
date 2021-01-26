@@ -236,6 +236,9 @@ class Chronos:
                                                                                             "changepoint_range", 
                                                                                             positive=False)
 
+        if (self.__proportion_of_data_subject_to_changepoints > 1.0):
+            raise ValueError("changepoint_range must be less than, or equal to, 1.0")
+
 
         
         self.__y_max = None
@@ -285,6 +288,8 @@ class Chronos:
             variable -      [str] The inputted variable, unmodified, if no errors
                             occured
         '''
+        if (not isinstance(variable, str)):
+            raise TypeError(f"A value of {variable} for {variable_name} is not supported. Supported values are: {options}")
         if (variable not in options):
             raise ValueError(f"A value of {variable} for {variable_name} is not supported. Supported values are: {options}")
         else:
@@ -317,7 +322,10 @@ class Chronos:
             error_message = f"{variable_name} must be a non-negative float"
 
         if (not isinstance(variable, float)):
-            raise TypeError(error_message)
+            if (not isinstance(variable, int)):
+                raise TypeError(error_message)
+            elif (isinstance(variable, bool)):
+                raise TypeError(error_message)
         elif (positive == True):
             if (variable <= 0.0):
                 raise ValueError(error_message)
@@ -353,6 +361,8 @@ class Chronos:
             error_message = f"{variable_name} must be a non-negative integer"
 
         if (not isinstance(variable, int)):
+            raise TypeError(error_message)
+        elif (isinstance(variable, bool)):
             raise TypeError(error_message)
         elif (positive == True):
             if (variable <= 0):

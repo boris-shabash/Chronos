@@ -15,16 +15,12 @@ weekday_names_ = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 
 Normal_dist_code = "Normal"
 StudentT_dist_code = "StudentT"
-LogNormal_dist_code = "LogNormal"
 Gamma_dist_code = "Gamma"
-Poisson_dist_code = "Poisson"
-HalfNormal_dist_code = "HalfNormal"
 
-#SUPPORTED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code, Gamma_dist_code]
 POSITIVE_DISTRIBUTIONS = [Gamma_dist_code]
 UNCONSTRAINED_DISTRIBUTIONS = [Normal_dist_code, StudentT_dist_code]
 
 SUPPORTED_DISTRIBUTIONS = POSITIVE_DISTRIBUTIONS + UNCONSTRAINED_DISTRIBUTIONS
 
 
-SUPPORTED_METHODS = ["MAP", "MLE"]
+SUPPORTED_METHODS = ["MAP", "MLE", "SVI"]

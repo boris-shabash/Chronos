@@ -22,6 +22,7 @@ def test_basic_creation():
         my_chronos = Chronos(distribution=distribution)
         my_chronos = Chronos(method="MAP", distribution=distribution)
         my_chronos = Chronos(method="MLE", distribution=distribution)
+        my_chronos = Chronos(method="SVI", distribution=distribution)
 
 ######################################################################
 def test_bad_method():
@@ -172,6 +173,7 @@ def test_bad_max_iter():
         with pytest.raises(TypeError):
             my_chronos = Chronos(max_iter=value)
 ######################################################################
+
 ######################################################################
 ######################################################################
 ######################################################################
