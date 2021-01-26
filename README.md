@@ -12,12 +12,17 @@ Simple time series prediction model. Implemented using <a href="https://pyro.ai/
 * pyro-ppl >= 1.3
 
 
-## Installation
+## Stable Installation
 
 To install chronos, run the following command from your terminal:
 ```python
 pip install chronos-forecast
 ```
+
+## Up-to-date Unstable Version
+
+For the most up-to-date but perhaps unstable version. Simply clone the code
+from the GitHub repository
 
 ## Simple Use Case
 
