@@ -40,21 +40,23 @@ def test_plotting(capsys, monkeypatch, sample_data):
         Test the plotting of data when no history is provided.
         This was an issue raised in issue #2.
     '''
-    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
-        my_chronos.fit(sample_data)
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:        
+        for method in chronos_utils.SUPPORTED_METHODS:
+            my_chronos = Chronos(method=method, n_changepoints=0, max_iter=100, distribution=distribution)
+            my_chronos.fit(sample_data)
 
-        future_df = my_chronos.make_future_dataframe(include_history=True)
-        predictions = my_chronos.predict(future_df)
+            future_df = my_chronos.make_future_dataframe(include_history=True)
+            predictions = my_chronos.predict(future_df)
 
 
-        with pytest.warns(UserWarning):
-            chronos_plotting.plot_components(predictions, my_chronos, figure_name="test_prediction.png")
+            with pytest.warns(UserWarning):
+                chronos_plotting.plot_components(predictions, my_chronos, figure_name="test_prediction.png")
 
-        std_error = capsys.readouterr().err
-        assert(std_error == "")
+            std_error = capsys.readouterr().err
+            assert(std_error == "")
 
     os.remove("test_prediction.png")
+
 
 ######################################################################
 def test_plotting_no_history(capsys, monkeypatch, sample_data):
@@ -63,23 +65,23 @@ def test_plotting_no_history(capsys, monkeypatch, sample_data):
         This was an issue raised in issue #2.
     '''
     for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution)
-        my_chronos.fit(sample_data)
+        for method in chronos_utils.SUPPORTED_METHODS:
+            my_chronos = Chronos(method=method, n_changepoints=0, max_iter=100, distribution=distribution)
+            my_chronos.fit(sample_data)
 
-        future_df = my_chronos.make_future_dataframe(include_history=False)
-        predictions = my_chronos.predict(future_df)
+            future_df = my_chronos.make_future_dataframe(include_history=False)
+            predictions = my_chronos.predict(future_df)
 
-        
-        fig = plt.figure(figsize=(15,5))
-        gs = gridspec.GridSpec(1,1, figure=fig)
-        gs_section = gs[0,0]
-        ax = fig.add_subplot(gs_section)
+            
+            fig = plt.figure(figsize=(15,5))
+            gs = gridspec.GridSpec(1,1, figure=fig)
+            gs_section = gs[0,0]
+            ax = fig.add_subplot(gs_section)
 
-        #chronos_plotting.plot_predictions(predictions, my_chronos, fig=fig, gs_section=gs_section)
-        chronos_plotting.plot_predictions(predictions, my_chronos, axs=ax)
-        plt.savefig("test_prediction_no_history.png")
+            chronos_plotting.plot_predictions(predictions, my_chronos, axs=ax)
+            plt.savefig("test_prediction_no_history.png")
 
-        std_error = capsys.readouterr().err
-        assert(std_error == "")
+            std_error = capsys.readouterr().err
+            assert(std_error == "")
 
     os.remove("test_prediction_no_history.png")

@@ -16,7 +16,7 @@ import pyro
 import pyro.distributions as dist
 from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
-from pyro.infer.autoguide import AutoDelta
+from pyro.infer.autoguide import AutoDelta, AutoNormal
 from pyro.infer.autoguide.initialization import init_to_feasible
 
 
@@ -653,7 +653,8 @@ class Chronos:
         if (self.__target_col in internal_data.columns):
 
             # Possion distribution requires counts, so we don't want to scale for it
-            if (self.__y_likelihood_distribution not in [chronos_utils.Poisson_dist_code]):
+            # TODO: make sure this matches the code in chronos utils if we make a Poisson distribution            
+            if (self.__y_likelihood_distribution not in ["Poisson"]):
                 y_values = internal_data[self.__target_col].values/self.__y_max
             else:
                 y_values = internal_data[self.__target_col].values
@@ -870,7 +871,7 @@ class Chronos:
         self.__additive_components = {}
         
         
-        if (self.__method in ["MLE", "MAP"]):        # Point estimate methods
+        if (self.__method in chronos_utils.SUPPORTED_METHODS):  
             if (self.__method == "MLE"):
                 print("Employing Maximum Likelihood Estimation")
                 self.__model = self.__model_function
@@ -883,6 +884,11 @@ class Chronos:
                 self.__guide = AutoDelta(self.__model, init_loc_fn=init_to_feasible)
                 self.__param_prefix  = "AutoDelta."
                 
+            elif (self.__method == "SVI"):
+                print("Employing Stochastic Variational Inference")
+                self.__model = self.__model_function
+                self.__guide = AutoNormal(self.__model, init_loc_fn=init_to_feasible)
+                self.__param_prefix = "AutoNormal."
 
             self.__train_point_estimate(X_time,
                                         X_dataframe,
@@ -1146,7 +1152,7 @@ class Chronos:
                             slope_init -        [float] The value of the initial
                                                 slope 
         '''
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             # Define paramters for the constant and slope
             intercept_init = pyro.sample("intercept", 
                                          dist.Normal(0.0, 10.0))
@@ -1177,7 +1183,7 @@ class Chronos:
             past_deltas -   [tensor] A tensor of the slope changes for the
                             trend component.
         '''
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             # sample from a Laplace distribution
             means = torch.zeros(self.__number_of_changepoints)
             scales = torch.full((self.__number_of_changepoints, ), self.__changepoint_prior_scale)
@@ -1216,7 +1222,7 @@ class Chronos:
                                 components. For a single seasonality these are
                                 coefficients for a pair of sine-cosine fourier terms
         '''
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             # sample from a normal distribution
             means = torch.zeros(seasonality_component.size(1))
             standard_deviations = torch.full((seasonality_component.size(1),), 10.0)
@@ -1256,7 +1262,7 @@ class Chronos:
             betas_regressors -      [tensor] A tensor of the coefficients for the 
                                     additional regressor components. 
         '''
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             means = torch.zeros(regressor_compoents.size(1))
             standard_deviations = torch.full((regressor_compoents.size(1),), 10.0)
 
@@ -1331,7 +1337,7 @@ class Chronos:
         
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
         elif (method == "MLE"):
             sigma = pyro.param("sigma", 
@@ -1375,7 +1381,7 @@ class Chronos:
 
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
             df = pyro.sample("df", dist.HalfCauchy(1.0))
         elif (method == "MLE"):
@@ -1422,7 +1428,7 @@ class Chronos:
 
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method == "MAP"):
+        if (method in ["MAP", "SVI"]):
             rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
         elif (method == "MLE"):
             rate = pyro.param("rate", 
@@ -1995,7 +2001,7 @@ class Chronos:
         self.__additive_components = {}
 
         # For point estimates, use the predictive interface
-        if (self.__method in ["MAP", "MLE"]):
+        if (self.__method in chronos_utils.SUPPORTED_METHODS):
             # https://pyro.ai/examples/bayesian_regression.html#Model-Evaluation
             predictive = Predictive(model=self.__model,
                                     guide=self.__guide,
@@ -2188,7 +2194,7 @@ class Chronos:
                                 seasonality
             
         '''
-        if (self.__method in ["MAP", "MLE"]):
+        if (self.__method in chronos_utils.POINT_ESTIMATE_METHODS):
             if (seasonality_name == "weekly"):
                 seasonality = self.__get_weekly_seasonality_point(f'{self.__param_prefix}betas')
             elif (seasonality_name == "monthly"):
@@ -2202,6 +2208,22 @@ class Chronos:
             elif (self.__seasonality_mode == "mul"):
                 seasonality['Y'] = 100*(1.0 + seasonality['Y'])
             return seasonality
+        elif (self.__method in chronos_utils.DISTRIBUTION_ESTIMATE_METHODS):
+            if (seasonality_name == "weekly"):
+                seasonality = self.__get_weekly_seasonality_dist(f'{self.__param_prefix}')
+            elif (seasonality_name == "monthly"):
+                seasonality = self.__get_monthly_seasonality_dist(f'{self.__param_prefix}')
+            elif (seasonality_name == "yearly"):
+                seasonality = self.__get_yearly_seasonality_dist(f'{self.__param_prefix}')
+            
+
+            if (self.__seasonality_mode == "add"):
+                if (self.__y_max is not None):
+                    seasonality['Y'] *= self.__y_max
+            elif (self.__seasonality_mode == "mul"):
+                seasonality['Y'] = 100*(1.0 + seasonality['Y'])
+            return seasonality
+            
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
@@ -2280,6 +2302,71 @@ class Chronos:
         
         return weekly_seasonality
     ########################################################################################################################
+    def __get_weekly_seasonality_dist(self, param_name):
+        '''
+            TODO: update description
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the weekly seasonality as well axis labels
+
+            Parameters:
+            ------------
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
+
+            
+            Returns:
+            ------------
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
+                                    
+                                    X -     The values for the weekly seasonality (0-6)
+                                    Label - The labels for the days ("Monday" - "Sunday")
+                                    Y -     The seasonal response for each day
+        '''
+
+        
+        # Get the parameter pairs of coefficients
+        weekly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_weekly"))
+        weekly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_weekly"))
+        
+        #print(weekly_params_loc)
+        #print(weekly_params_scales)
+
+        weekly_param_sampled_values = dist.Normal(weekly_params_loc, 
+                                                  weekly_params_scales).sample((1000,)).detach().numpy()
+        
+
+        
+        
+        # Monday is assumed to be 0
+        weekdays_numeric = np.arange(0, 7, 1)
+        weekdays = chronos_utils.weekday_names_
+        if (self.__trained_on_weekend == False):
+            weekdays_numeric = weekdays_numeric[:-2]
+            weekdays = weekdays[:-2]
+
+        # Compute seasonal response
+        seasonality_array = np.zeros((weekly_param_sampled_values.shape[0], 
+                                      weekdays_numeric.shape[0]))
+
+        for i in range(weekly_param_sampled_values.shape[0]):
+            seasonality_array[i, :] = self.__compute_seasonality(weekly_param_sampled_values[i], 
+                                                                 weekdays_numeric, 
+                                                                 weekdays_numeric.shape[0])
+        seasonality = seasonality_array.mean(axis=0)
+        seasonality_max = seasonality_array.max(axis=0)
+        seasonality_min = seasonality_array.min(axis=0)
+
+        #print(seasonality)
+        # Package everything nicely into a df
+        weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
+                                           "Label": weekdays,
+                                           "Y": seasonality})
+        
+        return weekly_seasonality
+    ########################################################################################################################
+
     def __get_monthly_seasonality_point(self, param_name):
         '''
             A function which accepts the name of the parameter where point estimates
@@ -2310,6 +2397,62 @@ class Chronos:
 
         # Compute seasonal response
         seasonality = self.__compute_seasonality(monthly_params, monthdays_numeric, 31)
+            
+        # Package everything nicely into a df
+        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
+                                            "Label": monthday_names,
+                                            "Y": seasonality})
+        
+        return monthly_seasonality
+        ########################################################################################################################
+
+    def __get_monthly_seasonality_dist(self, param_name):
+        '''
+            TODO: update
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the monthly seasonality as well axis labels
+
+            Parameters:
+            ------------
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
+
+            
+            Returns:
+            ------------
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
+                                    
+                                    X -     The values for the monthly seasonality (0-30)
+                                    Label - The labels for the days ("1st" - "31st")
+                                    Y -     The seasonal response for each day
+        '''
+
+        # Get the parameter pairs of coefficients
+        monthly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_monthly"))
+        monthly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_monthly"))
+
+
+        monthly_param_sampled_values = dist.Normal(monthly_params_loc, 
+                                                   monthly_params_scales).sample((1000,)).detach().numpy()
+
+        
+        monthdays_numeric = np.arange(0, 31, 1)
+        monthday_names = chronos_utils.monthday_names_
+
+        # Compute seasonal response
+        seasonality_array = np.zeros((monthly_param_sampled_values.shape[0], 
+                                      monthdays_numeric.shape[0]))
+
+        for i in range(monthly_param_sampled_values.shape[0]):
+            seasonality_array[i, :] = self.__compute_seasonality(monthly_param_sampled_values[i], 
+                                                                 monthdays_numeric, 
+                                                                 monthdays_numeric.shape[0])
+
+        seasonality = seasonality_array.mean(axis=0)
+        seasonality_max = seasonality_array.max(axis=0)
+        seasonality_min = seasonality_array.min(axis=0)
             
         # Package everything nicely into a df
         monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
@@ -2365,7 +2508,16 @@ class Chronos:
             A property which return the changepoint values
             of the history
         '''
-        past_deltas = pyro.param(f"{self.__param_prefix}delta")
+        
+        # data is in AutoNormal.locs.delta and AutoNormal.scales.data
+        if (self.__method in chronos_utils.POINT_ESTIMATE_METHODS):
+            past_deltas = pyro.param(f"{self.__param_prefix}delta")
+        else:
+            changepoint_values_distribution  = dist.Normal(pyro.param(f"{self.__param_prefix}locs.delta"), 
+                                                           pyro.param(f"{self.__param_prefix}scales.delta"))
+            past_deltas = changepoint_values_distribution.sample((1000, )).mean(dim=0)
+            #print(dir(self.__guide))
+            
         return past_deltas
     ########################################################################################################################
     @property

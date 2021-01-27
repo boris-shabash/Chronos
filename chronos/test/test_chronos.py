@@ -33,36 +33,6 @@ def sample_data():
                           "y": 0.01 * x + np.sin(x/30)})
 
     return my_df
-######################################################################
-def test_basic_creation():
-    '''
-        Test that the class can be created using both MLE and MAP methods
-    '''
-    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        my_chronos = Chronos(distribution=distribution)
-        my_chronos = Chronos(method="MAP", distribution=distribution)
-        my_chronos = Chronos(method="MLE", distribution=distribution)
-
-######################################################################
-def test_incorrect_method_specification():
-    '''
-        Test that when an incorrect method is specified, 
-        an error is raised
-    '''
-    with pytest.raises(ValueError):
-        my_chronos = Chronos(method="BLA")
-
-    with pytest.raises(ValueError):
-        my_chronos = Chronos(method=3)
-
-    with pytest.raises(ValueError):
-        my_chronos = Chronos(method="map")
-
-    with pytest.raises(ValueError):
-        my_chronos = Chronos(method=4.3)
-
-    with pytest.raises(ValueError):
-        my_chronos = Chronos(method=None)
 
 ######################################################################
 def test_predictions_with_additional_regressors(sample_data):
@@ -103,7 +73,7 @@ def test_predictions_not_nan(sample_data):
     '''
         Make sure no nans are returned during the prediction process
     '''
-    for method in ["MAP", "MLE"]:
+    for method in ["MAP", "MLE", "SVI"]:
         for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
             my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution, method=method)
             my_chronos.fit(sample_data)
@@ -128,7 +98,6 @@ def test_prediction_no_seasonality(sample_data):
         modify the predictions
     '''
     for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
-        if (distribution not in [chronos_utils.Poisson_dist_code, chronos_utils.HalfNormal_dist_code]):
             # Poisson and half-normal produes very strange results here
             my_chronos = Chronos(n_changepoints=6,
                                 max_iter=100, 
