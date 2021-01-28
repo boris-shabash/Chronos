@@ -258,6 +258,12 @@ def test_error_for_nan_values(sample_data):
     
 
 ######################################################################
+def test_prediction_uncertain_seasonality_within_bounds(sample_data):
+    '''
+        Check that Y_upper is higher than Y and that Y_lower is
+        lower than Y
+    '''
+    pass
 ######################################################################
 ######################################################################
 

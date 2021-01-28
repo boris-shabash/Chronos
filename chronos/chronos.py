@@ -16,7 +16,7 @@ import pyro
 import pyro.distributions as dist
 from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
-from pyro.infer.autoguide import AutoDelta, AutoNormal
+from pyro.infer.autoguide import AutoDelta, AutoNormal, AutoGuideList
 from pyro.infer.autoguide.initialization import init_to_feasible
 
 
@@ -180,7 +180,7 @@ class Chronos:
     
     
     def __init__(self, 
-                 method="MAP", 
+                 method="SVI", 
                  n_changepoints = 20,
                  year_seasonality_order=10,
                  month_seasonality_order=5,
@@ -887,8 +887,13 @@ class Chronos:
             elif (self.__method == "SVI"):
                 print("Employing Stochastic Variational Inference")
                 self.__model = self.__model_function
-                self.__guide = AutoNormal(self.__model, init_loc_fn=init_to_feasible)
-                self.__param_prefix = "AutoNormal."
+                self.__guide = AutoGuideList(self.__model)
+
+                self.__guide.append(AutoNormal(pyro.poutine.block(self.__model, hide=["delta", "sigma", "rate", "df"]), init_scale=0.01))
+                self.__guide.append(AutoDelta(pyro.poutine.block(self.__model, expose=["delta", "sigma", "rate", "df"]), init_loc_fn=init_to_feasible))
+
+                self.__param_prefix_normal = "AutoGuideList.0."
+                self.__param_prefix_delta = "AutoGuideList.1."
 
             self.__train_point_estimate(X_time,
                                         X_dataframe,
@@ -1977,7 +1982,9 @@ class Chronos:
         '''
         
         
-
+        #for item in pyro.get_param_store():
+        #    print(item)
+        #assert(False)
         self.__prediction_verbose = verbose
         # Make a future dataframe if one is not provided
         if (future_df is None):            
@@ -2210,18 +2217,22 @@ class Chronos:
             return seasonality
         elif (self.__method in chronos_utils.DISTRIBUTION_ESTIMATE_METHODS):
             if (seasonality_name == "weekly"):
-                seasonality = self.__get_weekly_seasonality_dist(f'{self.__param_prefix}')
+                seasonality = self.__get_weekly_seasonality_dist(f'{self.__param_prefix_normal}')
             elif (seasonality_name == "monthly"):
-                seasonality = self.__get_monthly_seasonality_dist(f'{self.__param_prefix}')
+                seasonality = self.__get_monthly_seasonality_dist(f'{self.__param_prefix_normal}')
             elif (seasonality_name == "yearly"):
-                seasonality = self.__get_yearly_seasonality_dist(f'{self.__param_prefix}')
+                seasonality = self.__get_yearly_seasonality_dist(f'{self.__param_prefix_normal}')
             
 
             if (self.__seasonality_mode == "add"):
                 if (self.__y_max is not None):
                     seasonality['Y'] *= self.__y_max
+                    seasonality['Y_upper'] *= self.__y_max
+                    seasonality['Y_lower'] *= self.__y_max
             elif (self.__seasonality_mode == "mul"):
                 seasonality['Y'] = 100*(1.0 + seasonality['Y'])
+                seasonality['Y_upper'] = 100*(1.0 + seasonality['Y_upper'])
+                seasonality['Y_lower'] = 100*(1.0 + seasonality['Y_lower'])
             return seasonality
             
         else:
@@ -2362,7 +2373,9 @@ class Chronos:
         # Package everything nicely into a df
         weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
                                            "Label": weekdays,
-                                           "Y": seasonality})
+                                           "Y": seasonality,
+                                           "Y_upper": seasonality_max,
+                                           "Y_lower": seasonality_min})
         
         return weekly_seasonality
     ########################################################################################################################
@@ -2457,7 +2470,9 @@ class Chronos:
         # Package everything nicely into a df
         monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
                                             "Label": monthday_names,
-                                            "Y": seasonality})
+                                            "Y": seasonality,
+                                            "Y_upper": seasonality_max,
+                                            "Y_lower": seasonality_min})
         
         return monthly_seasonality
 
@@ -2500,6 +2515,66 @@ class Chronos:
                                            "Y": seasonality})
         
         return yearly_seasonality
+    ########################################################################################################################
+    def __get_yearly_seasonality_dist(self, param_name):
+        '''
+            TODO: update
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the yearly seasonality as well axis labels
+
+            Parameters:
+            ------------
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
+
+            
+            Returns:
+            ------------
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
+                                    
+                                    X -     The values for the yearly seasonality 
+                                            days (0-366)
+                                    Label - The labels for the days (the individual dates)
+                                    Y -     The seasonal response for each day
+        '''
+        
+        # Get the parameter pairs of coefficients
+        yearly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_yearly"))
+        yearly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_yearly"))
+        
+        yearly_param_sampled_values = dist.Normal(yearly_params_loc, 
+                                                  yearly_params_scales).sample((1000,)).detach().numpy()
+
+
+        yeardays_numeric = np.arange(0, 366, 1)
+        yearly_dates = pd.date_range(start="01-01-2020", periods=366) # Use a leap year to include Feb 29th
+
+        # Compute seasonal response
+        seasonality_array = np.zeros((yearly_param_sampled_values.shape[0], 
+                                      yeardays_numeric.shape[0]))
+
+        for i in range(yearly_param_sampled_values.shape[0]):
+            seasonality_array[i, :] = self.__compute_seasonality(yearly_param_sampled_values[i], 
+                                                                 yeardays_numeric, 
+                                                                 yeardays_numeric.shape[0])
+
+
+
+        #seasonality = self.__compute_seasonality(yearly_params, yeardays_numeric, 366)
+        seasonality = seasonality_array.mean(axis=0)
+        seasonality_max = seasonality_array.max(axis=0)
+        seasonality_min = seasonality_array.min(axis=0)
+            
+        # Package everything nicely into a df
+        yearly_seasonality = pd.DataFrame({"X": yearly_dates,
+                                           "Label": yearly_dates,
+                                           "Y": seasonality,
+                                           "Y_upper": seasonality_max,
+                                           "Y_lower": seasonality_min})
+        
+        return yearly_seasonality
     
     ########################################################################################################################
     @property
@@ -2509,14 +2584,10 @@ class Chronos:
             of the history
         '''
         
-        # data is in AutoNormal.locs.delta and AutoNormal.scales.data
         if (self.__method in chronos_utils.POINT_ESTIMATE_METHODS):
             past_deltas = pyro.param(f"{self.__param_prefix}delta")
         else:
-            changepoint_values_distribution  = dist.Normal(pyro.param(f"{self.__param_prefix}locs.delta"), 
-                                                           pyro.param(f"{self.__param_prefix}scales.delta"))
-            past_deltas = changepoint_values_distribution.sample((1000, )).mean(dim=0)
-            #print(dir(self.__guide))
+            past_deltas = pyro.param(f"{self.__param_prefix_delta}delta")
             
         return past_deltas
     ########################################################################################################################

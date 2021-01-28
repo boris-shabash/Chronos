@@ -341,6 +341,7 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=
 ########################################################################################################################
 def plot_weekly_seasonality(chronos_object, axs=None):
     '''
+        TODO: update
         A function which plots the weekly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
@@ -377,6 +378,13 @@ def plot_weekly_seasonality(chronos_object, axs=None):
     
     axs.plot(weekly_seasonality['X'], weekly_seasonality['Y'], linewidth=3, c=prediction_color_)
 
+    if ("Y_upper" in weekly_seasonality.columns):
+        axs.fill_between(weekly_seasonality['X'], 
+                         weekly_seasonality['Y_upper'], 
+                         weekly_seasonality['Y_lower'], 
+                         color=uncertainty_color_, 
+                         alpha=0.3)
+
     # If we have additive seasonality we will positive and negative values
     # but if it's multiplicative, we will only have positive values and
     # won't be a good idea to include the 0 line, otherwise it warps
@@ -388,7 +396,7 @@ def plot_weekly_seasonality(chronos_object, axs=None):
         axs.yaxis.set_major_formatter(mtick.PercentFormatter())
     axs.set_xticks(weekly_seasonality['X'].values)
     axs.set_xticklabels(weekly_seasonality['Label'].values)
-    axs.set_xlim(-0.1, weekly_seasonality['X'].max()+0.1)
+    axs.set_xlim(-0.03, weekly_seasonality['X'].max()+0.03)
     axs.set_xlabel('Weekday', size=18)
     axs.set_ylabel('Seasonality', size=18)
     axs.set_title('Weekly Seasonality', size=18)
@@ -433,6 +441,12 @@ def plot_monthly_seasonality(chronos_object, axs=None):
         fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
     axs.plot(monthly_seasonality['X'], monthly_seasonality['Y'], linewidth=3, c=prediction_color_)
+    if ("Y_upper" in monthly_seasonality.columns):
+        axs.fill_between(monthly_seasonality['X'], 
+                         monthly_seasonality['Y_upper'], 
+                         monthly_seasonality['Y_lower'], 
+                         color=uncertainty_color_, 
+                         alpha=0.3)
     
     # If we have additive seasonality we will positive and negative values
     # but if it's multiplicative, we will only have positive values and
@@ -490,6 +504,12 @@ def plot_yearly_seasonality(chronos_object, axs=None):
         fig, axs = plt.subplots(1, 1, figsize=(15, 5))
 
     axs.plot(yearly_seasonality['X'], yearly_seasonality['Y'], linewidth=3, c=prediction_color_)
+    if ("Y_upper" in yearly_seasonality.columns):
+        axs.fill_between(yearly_seasonality['X'], 
+                         yearly_seasonality['Y_upper'], 
+                         yearly_seasonality['Y_lower'], 
+                         color=uncertainty_color_, 
+                         alpha=0.3)
 
     # If we have additive seasonality we will positive and negative values
     # but if it's multiplicative, we will only have positive values and

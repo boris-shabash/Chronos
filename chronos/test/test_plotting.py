@@ -50,12 +50,12 @@ def test_plotting(capsys, monkeypatch, sample_data):
 
 
             with pytest.warns(UserWarning):
-                chronos_plotting.plot_components(predictions, my_chronos, figure_name="test_prediction.png")
+                chronos_plotting.plot_components(predictions, my_chronos, figure_name=f"test_plots/test_prediction_{distribution}_{method}.png")
 
             std_error = capsys.readouterr().err
             assert(std_error == "")
 
-    os.remove("test_prediction.png")
+    #os.remove("test_prediction.png")
 
 
 ######################################################################
