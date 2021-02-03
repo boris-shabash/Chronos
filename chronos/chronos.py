@@ -180,7 +180,7 @@ class Chronos:
     
     
     def __init__(self, 
-                 method="SVI", 
+                 method="MAP", 
                  n_changepoints = 20,
                  year_seasonality_order=10,
                  month_seasonality_order=5,
@@ -889,8 +889,9 @@ class Chronos:
                 self.__model = self.__model_function
                 self.__guide = AutoGuideList(self.__model)
 
-                self.__guide.append(AutoNormal(pyro.poutine.block(self.__model, hide=["delta", "sigma", "rate", "df"]), init_scale=0.01))
-                self.__guide.append(AutoDelta(pyro.poutine.block(self.__model, expose=["delta", "sigma", "rate", "df"]), init_loc_fn=init_to_feasible))
+                columns_for_delta_distribution = ["delta", "sigma", "rate", "df", "intercept", "trend_slope"]
+                self.__guide.append(AutoNormal(pyro.poutine.block(self.__model, hide=columns_for_delta_distribution), init_scale=0.01))
+                self.__guide.append(AutoDelta(pyro.poutine.block(self.__model, expose=columns_for_delta_distribution), init_loc_fn=init_to_feasible))
 
                 self.__param_prefix_normal = "AutoGuideList.0."
                 self.__param_prefix_delta = "AutoGuideList.1."
@@ -899,7 +900,6 @@ class Chronos:
                                         X_dataframe,
                                         y)
         elif (self.__method == "MCMC"):
-            print("Employing Markov Chain Monte Carlo")
             raise NotImplementedError("Did not implement MCMC methods")
         
 

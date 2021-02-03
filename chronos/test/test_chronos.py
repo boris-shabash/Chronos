@@ -260,10 +260,22 @@ def test_error_for_nan_values(sample_data):
 ######################################################################
 def test_prediction_uncertain_seasonality_within_bounds(sample_data):
     '''
-        Check that Y_upper is higher than Y and that Y_lower is
-        lower than Y
+        Check that Y_upper is higher than Y_hat and that Y_lower is
+        lower than Y_hat
     '''
-    pass
+    
+    for distribution in chronos_utils.SUPPORTED_DISTRIBUTIONS:
+        my_chronos = Chronos(n_changepoints=0, max_iter=100, distribution=distribution, method="SVI")
+        my_chronos.fit(sample_data)
+
+        for season in ['yearly', 'weekly', 'monthly']:
+            seasonality = my_chronos.get_seasonality(season)
+            print(seasonality)
+
+            assert((seasonality['Y'] >= seasonality['Y_lower']).all())
+            assert((seasonality['Y'] <= seasonality['Y_upper']).all())
+            #assert(False)
+            #print(predictions)
 ######################################################################
 ######################################################################
 
