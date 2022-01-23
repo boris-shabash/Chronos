@@ -33,8 +33,6 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
         The resulting figure will have the raw predictions, the trend, and the residuals
         (the error terms) from the prediction process. Seasonalities are plottted as well
         if chronos_object is provided.
-
-
         Parameters:
         ------------
         predictions -           [DataFrame] A pandas dataframe returned from the .predict 
@@ -43,25 +41,18 @@ def plot_components(predictions, chronos_object=None, changepoint_threshold = 0.
                                 as well as the following columns: 
                                 yhat, yhat_upper, yhat_lower, trend, trend_upper, 
                                 trend_lower
-
         chronos_object -        [Chronos] A fitted chronos object that was used to 
                                 generate the predictions dataframe. If this object 
                                 is not provided seasonalities are not plotted
-
                                 Default is None
-
         changepoint_threshold - [float] The threshold for the changepoints to be marked on
                                 the plot. Must be a non-negative
-
                                 Default is 0.0
-
         figure_name -           [str] An optional parameter for the figure name for it to
                                 be saved. E.g. "myfig.png"
-
                                 Default is None
         
         figsize -               [tuple] The figure size to use
-
                                 Default is (15,15)
         
         Returns:
@@ -144,7 +135,6 @@ def plot_predictions(predictions, chronos_object=None, axs=None):
         An optional axis can be passed in for the drawing to take place on in case a 
         subplot is used. If no matplotlib axis is passed in, the function draws the 
         resulting figure and returns it
-
         Parameters:
         ------------
         predictions -           [DataFrame] A pandas dataframe returned from the .predict 
@@ -153,18 +143,14 @@ def plot_predictions(predictions, chronos_object=None, axs=None):
                                 as well as the following columns: 
                                 yhat, yhat_upper, yhat_lower, trend, trend_upper, 
                                 trend_lower
-
         chronos_object -        [Chronos] A fitted chronos object that was used to 
                                 generate the predictions dataframe. If this object 
                                 is not provided assumptions are made about the 
                                 naming in the predictions dataframe
-
                                 Default is None
-
         axs -                   [Axis] The axis on which to perform the plotting of the
                                 matplotlib plot. If no axis is provided, a new figure
                                 is created and returned
-
                                 Default is None
         
         Returns:
@@ -229,8 +215,6 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=
         An optional axis can be passed in for the drawing to take place on in case a 
         subplot is used. If no matplotlib axis is passed in, the function draws the 
         resulting figure and returns it
-
-
         Parameters:
         ------------
         predictions -           [DataFrame] A pandas dataframe returned from the .predict 
@@ -239,31 +223,24 @@ def plot_trend(predictions, chronos_object=None, changepoint_threshold=0.0, axs=
                                 as well as the following columns: 
                                 yhat, yhat_upper, yhat_lower, trend, trend_upper, 
                                 trend_lower
-
         chronos_object -        [Chronos] A fitted chronos object that was used to 
                                 generate the predictions dataframe. If this object 
                                 is not provided assumptions are made about the 
                                 naming in the predictions dataframe, and changepoints
                                 are not labeled on the plot.
-
                                 Default is None
-
         changepoint_threshold - [float] The threshold for the changepoints to be marked on
                                 the plot. Must be a non-negative
-
                                 Default is 0.0
-
         axs -                   [Axis] The axis on which to perform the plotting of the
                                 matplotlib plot. If no axis is provided, a new figure
                                 is created and returned
-
                                 Default is None
         
         Returns:
         ------------
         fig -                   [Figure] The figure object on which all the plotting takes
                                 place. Only returned if no axis is provided to axs
-
     '''
 
     # Set everything up
@@ -345,20 +322,15 @@ def plot_weekly_seasonality(chronos_object, axs=None):
         A function which plots the weekly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
-
-
         Parameters:
         ------------
         chronos_object -    [Chronos] A fitted chronos object that was used to 
                             generate the predictions dataframe. 
-
         axs -               [Axis] Optional argument, a matplotlib subplot axis for 
                             the  drawing to take place on. If no axis is passed in 
                             as an argument, a new figure is created and returned 
                             upon drawing.
-
                             Default is None
-
         
         Returns:
         ------------
@@ -410,19 +382,14 @@ def plot_monthly_seasonality(chronos_object, axs=None):
         A function which plots the monthly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
-
-
         Parameters:
         ------------
         chronos_object -    [Chronos] A fitted chronos object that was used to 
                             generate the predictions dataframe. 
-
         axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
                             drawing to take place on. If no axis is passed in as an 
                             argument, a new figure is created and returned upon drawing.
-
                             Default is None
-
         
         Returns:
         ------------
@@ -474,19 +441,14 @@ def plot_yearly_seasonality(chronos_object, axs=None):
         A function which plots the yearly seasonality. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
-
-
         Parameters:
         ------------
         chronos_object -    [Chronos] A fitted chronos object that was used to 
                             generate the predictions dataframe. 
-
         axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
                             drawing to take place on. If no axis is passed in as an 
                             argument, a new figure is created and returned upon drawing.
-
                             Default is None
-
         
         Returns:
         ------------
@@ -536,8 +498,6 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
         A function which plots the residuals of the fit. An optional axis can be passed in
         for the drawing to take place on in case a subplot is used. If no matplotlib axis
         is passed in, the function draws the resulting figure and returns it
-
-
         Parameters:
         ------------
         predictions -       [DataFrame] A pandas dataframe returned from the .predict 
@@ -546,20 +506,15 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
                             as well as the following columns: 
                             yhat, yhat_upper, yhat_lower, trend, trend_upper, 
                             trend_lower
-
         chronos_object -    [Chronos] A fitted chronos object that was used to 
                             generate the predictions dataframe. If this object 
                             is not provided assumptions are made about the 
                             naming in the predictions dataframe.
-
                             Default is None
-
         axs -               [Axis] Optional argument, a matplotlib subplot axis for the 
                             drawing to take place on. If no axis is passed in as an 
                             argument, a new figure is created and returned upon drawing.
-
                             Default is None
-
         
         Returns:
         ------------
@@ -641,35 +596,28 @@ def plot_residuals(predictions, chronos_object=None, axs=None):
 # UNDER DEVELOPMENT
 """def get_seasonal_plotly_figure(self, seasonality_df):
     '''
-
         Parameters:
         ------------
         
-
         
         Returns:
         ------------
         
     '''
-
     data_trace = go.Scatter(x=seasonality_df['X'], 
                             y=seasonality_df['Y'], 
                             mode="lines+markers",
                             marker=dict(color='Green', symbol="diamond"),
                             line=dict(width=3))
-
     trace_0 = go.Scatter(x=seasonality_df['X'],
                             y=[0]*seasonality_df.shape[0],
                             mode="lines",
                             line=dict(width=3, color="Black"))
     fig = go.Figure(
         data=[data_trace, trace_0])
-
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=False)
-
     return fig
-
 ########################################################################################################################
 def plot_weekly_seasonality_plotly(self):
     '''
@@ -677,34 +625,25 @@ def plot_weekly_seasonality_plotly(self):
         Parameters:
         ------------
         
-
         
         Returns:
         ------------
         
     '''
     weekly_seasonality = self.get_weekly_seasonality()
-
     fig = self.get_seasonal_plotly_figure(weekly_seasonality)
-
     fig.update_layout(xaxis=dict(tickmode = 'array', 
                                     tickvals = weekly_seasonality['X'],
                                     ticktext = weekly_seasonality['Label']),
                         title=dict(text="Weekly Seasonality", x = 0.5))
     fig.show()
-
-
-
-
 ########################################################################################################################
 def plot_monthly_seasonality_plotly(self):
     '''
         TODO: update
-
         Parameters:
         ------------
         
-
         
         Returns:
         ------------
@@ -713,14 +652,12 @@ def plot_monthly_seasonality_plotly(self):
     monthly_seasonality = self.get_monthly_seasonality()
     
     fig = self.get_seasonal_plotly_figure(monthly_seasonality)
-
     fig.update_layout(xaxis_range=[-0.2, 30.2])
     fig.update_layout(xaxis=dict(tickmode = 'array', 
                                     tickvals = monthly_seasonality['X'],
                                     ticktext = monthly_seasonality['Label']),
                         title=dict(text="Monthly Seasonality", x = 0.5))    
     fig.show()
-
     
 ########################################################################################################################
 def plot_yearly_seasonality_plotly(self):
@@ -729,14 +666,12 @@ def plot_yearly_seasonality_plotly(self):
         Parameters:
         ------------
         
-
         
         Returns:
         ------------
         
     '''
     yearly_seasonality = self.get_yearly_seasonality()
-
     
     fig = self.get_seasonal_plotly_figure(yearly_seasonality)
     

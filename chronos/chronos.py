@@ -3,19 +3,22 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-
+import math
 import chronos_utils
 import pandas as pd
 import numpy as np
 
+
+
 import torch
-from torch.optim import Rprop
+from torch.optim import Adam
 from torch.distributions import constraints
 
 import pyro
 import pyro.distributions as dist
 from pyro.optim import ExponentialLR
 from pyro.infer import SVI, Trace_ELBO, Predictive, JitTrace_ELBO
+from pyro.infer import MCMC, NUTS
 from pyro.infer.autoguide import AutoDelta, AutoNormal, AutoGuideList
 from pyro.infer.autoguide.initialization import init_to_feasible
 
@@ -29,11 +32,13 @@ pyro.enable_validation(True)
 class Chronos:
     '''
 
+        TODO: update for transformation
 
         Parameters:
         ------------
         method="MAP" -              [str] The estimation method used. Currently only 
-                                    supports one of "MAP" (Maximum A Posteriori), or "MLE"
+                                    supports one of "MAP" (Maximum A Posteriori), "SVI" 
+                                    (Stochastic Variational Inference), or "MLE"
                                     (Maximum Likelihood Estimation). If "MLE" is chosen, 
                                     'changepoint_prior_scale' is ignored. 
 
@@ -81,6 +86,8 @@ class Chronos:
                                     faster but might produce worse solutions. Smaller
                                     values allow for better convergence but will require
                                     more iterations to be specified at [max_iter].
+                                    "SVI" based methods may require a lower learning
+                                    rate and a higher number of iterations.
 
                                     Default is 0.01
 
@@ -141,6 +148,8 @@ class Chronos:
                                     values will increase run-time, but will lead to better
                                     results. Smaller learning_rate values require larger 
                                     max_iter values.
+                                    "SVI" based methods may require a lower learning
+                                    rate and a higher number of iterations.
 
                                     Default is 1000.
 
@@ -188,8 +197,10 @@ class Chronos:
                  learning_rate=0.01,
                  changepoint_range = 0.8,
                  changepoint_prior_scale = 0.05,
+                 cap_prior_scale = 0.5,
                  distribution = "Normal",
                  seasonality_mode = "add",
+                 trend = "identity",
                  max_iter=1000):
 
         '''
@@ -201,6 +212,11 @@ class Chronos:
         self.__method = self.__check_is_string_supported(method, 
                                                          "method", 
                                                          chronos_utils.SUPPORTED_METHODS)
+
+        self.__trend_transformation = self.__check_is_string_supported(trend,
+                                                                 "trend",
+                                                                 ["identity", "exponential", "logistic"])
+
         self.__seasonality_mode = self.__check_is_string_supported(seasonality_mode, 
                                                                    "seasonality_mode", 
                                                                    ["add", "mul"])
@@ -232,6 +248,10 @@ class Chronos:
         self.__changepoint_prior_scale = self.__check_is_supported_float(changepoint_prior_scale, 
                                                                          "changepoint_prior_scale", 
                                                                          positive=True)
+
+        self.__cap_prior_scale = self.__check_is_supported_float(cap_prior_scale,
+                                                                 "cap_prior_scale",
+                                                                  positive=True)
         self.__proportion_of_data_subject_to_changepoints = self.__check_is_supported_float(changepoint_range, 
                                                                                             "changepoint_range", 
                                                                                             positive=False)
@@ -242,11 +262,12 @@ class Chronos:
 
         
         self.__y_max = None
+        self.__A_dict = {} # HERE
         self.__history_min_time_seconds = None
         self.__history_max_time_seconds = None
         self.__prediction_verbose = False
 
-        
+        self.__seasonality_sample_number = 10000
         self.__multiplicative_seasonalities = []
         self.__multiplicative_additional_regressors = []
 
@@ -264,8 +285,22 @@ class Chronos:
         # parameters fed in are positive
         if (self.__y_likelihood_distribution in chronos_utils.POSITIVE_DISTRIBUTIONS):
             self.__make_likelihood_mean_positive = True
-        else:
+
+            if (self.__trend_transformation == "exponential"):
+                self.__trend_transform_function = self.__exp_transform
+            elif (self.__trend_transformation == "logistic"):
+                self.__trend_transform_function = self.__sigmoid_transform
+            elif (self.__trend_transformation == "identity"):
+                self.__trend_transform_function = self.__identity_transform
+
+        elif (self.__y_likelihood_distribution in chronos_utils.SIGMOID_CONSTRAINED_DISTRIBUTIONS):
+            self.__make_likelihood_mean_positive = True
+            self.__trend_transform_function = self.__double_softplus_transform
+
+
+        elif (self.__y_likelihood_distribution in chronos_utils.UNCONSTRAINED_DISTRIBUTIONS):
             self.__make_likelihood_mean_positive = False
+            self.__trend_transform_function = self.__identity_transform
         
     ########################################################################################################################
     def __check_is_string_supported(self, variable, variable_name, options):
@@ -586,6 +621,7 @@ class Chronos:
     ######################################################################################################################## 
     def __transform_data(self, data):
         '''
+            TODO: update return parameters
             A function which takes the raw data containing the timestamp and
             target column, and returns tensors for the trend, seasonality, and additional
             components
@@ -617,10 +653,11 @@ class Chronos:
         # make a copy to avoid side effects of changing the original df
         internal_data = data.copy()
 
+        '''
         for regressor_list in [self.__additive_additional_regressors, self.__multiplicative_additional_regressors]:
             for regressor_name in regressor_list:
                 if regressor_name not in internal_data.columns.values:
-                    raise KeyError(f"Could not find regressor '{regressor_name}' in data provided")
+                    raise KeyError(f"Could not find regressor '{regressor_name}' in data provided")'''
 
         if (self.__target_col in internal_data.columns):
             X_dataframe = internal_data.drop(self.__target_col, axis=1)
@@ -628,20 +665,24 @@ class Chronos:
             X_dataframe = internal_data
 
 
-        # Convert ms values to seconds
-        internal_data[self.__time_col] = internal_data[self.__time_col].values.astype(float)/1e9
+        
+        # build the data
 
+
+        # Convert ms values to seconds
+        internal_data['time'] = internal_data[self.__time_col].values.astype(float)/1e9
+
+
+        
         if (self.__history_min_time_seconds is None):
-            self.__history_min_time_seconds = internal_data[self.__time_col].min()
-            self.__history_max_time_seconds = internal_data[self.__time_col].max()
+            self.__history_min_time_seconds = internal_data['time'].min()
+            self.__history_max_time_seconds = internal_data['time'].max()
 
         # Make time column go from 0 to 1
-        internal_data[self.__time_col] = internal_data[self.__time_col] - self.__history_min_time_seconds
-        internal_data[self.__time_col] = internal_data[self.__time_col]/(self.__history_max_time_seconds - self.__history_min_time_seconds)
+        internal_data['time'] = internal_data['time'] - self.__history_min_time_seconds
+        internal_data['time'] = internal_data['time']/(self.__history_max_time_seconds - self.__history_min_time_seconds)
 
-        X_time = torch.tensor(internal_data[self.__time_col].values, dtype=torch.float32)
-        
-        
+        X_time = internal_data[self.__time_col]
 
 
         # we only want to define y_max once
@@ -653,21 +694,123 @@ class Chronos:
         if (self.__target_col in internal_data.columns):
 
             # Possion distribution requires counts, so we don't want to scale for it
-            # TODO: make sure this matches the code in chronos utils if we make a Poisson distribution            
-            if (self.__y_likelihood_distribution not in ["Poisson"]):
+            if (self.__y_likelihood_distribution not in [chronos_utils.Poisson_dist_code]):
                 y_values = internal_data[self.__target_col].values/self.__y_max
+
             else:
                 y_values = internal_data[self.__target_col].values
             
-            y = torch.tensor(y_values, dtype=torch.float32)
+            original_y = torch.tensor(y_values, dtype=torch.float32)
+            
+            if (self.__y_likelihood_distribution in chronos_utils.SIGMOID_CONSTRAINED_DISTRIBUTIONS) or ((self.__y_likelihood_distribution in chronos_utils.POSITIVE_DISTRIBUTIONS)):
+                y = (original_y - torch.finfo(torch.float32).eps).clamp(min=torch.finfo(torch.float32).eps)
+            else:
+                y = original_y
 
         else:
-            y = None
+            y = original_y = None
+
+        internal_data = internal_data.drop([self.__time_col, self.__target_col], axis=1)
+        
         
 
+
+        # BORIS HERE
+        #print(self.__multiplicative_seasonalities)
         
-        return X_time, X_dataframe, y
+
+        multiplicative_components = ()
+        additive_components = ()
+
+
+        seasonality_components = ()
+        for seasonality in self.__multiplicative_seasonalities:
+            seasonality_name = seasonality['name']
+            seasonality_indexes = []
+            
+
+
+            fourier_order = seasonality['order']
+            time_transform_function = seasonality['extraction_function']
+
+
+            cycle = 2 * math.pi * time_transform_function(X_time)
+            for i in range(1, fourier_order+1):
+                name_sin = f'{seasonality_name}_order_{i}_sin_mul'
+                name_cos = f'{seasonality_name}_order_{i}_cos_mul'
+
+                seasonality_indexes.append(internal_data.shape[1])
+                internal_data[name_sin] = np.sin(i * cycle)
+                seasonality_indexes.append(internal_data.shape[1])
+                internal_data[name_cos] = np.cos(i * cycle)     
+            
+            seasonality_tuple = ((seasonality_name, tuple(seasonality_indexes)), )
+            seasonality_components = seasonality_components + (seasonality_tuple)
+
+
+
+        multiplicative_components = multiplicative_components + (("seasonality", seasonality_components), )
         
+                
+
+
+
+        seasonality_components = ()
+        for seasonality in self.__additive_seasonalities:
+            seasonality_name = seasonality['name']
+            seasonality_indexes = []
+            
+
+
+            fourier_order = seasonality['order']
+            time_transform_function = seasonality['extraction_function']
+
+
+            cycle = 2 * math.pi * time_transform_function(X_time)
+            for i in range(1, fourier_order+1):
+                name_sin = f'{seasonality_name}_order_{i}_sin_mul'
+                name_cos = f'{seasonality_name}_order_{i}_cos_mul'
+
+                seasonality_indexes.append(internal_data.shape[1])
+                internal_data[name_sin] = np.sin(i * cycle)
+                seasonality_indexes.append(internal_data.shape[1])
+                internal_data[name_cos] = np.cos(i * cycle)     
+            
+            seasonality_tuple = ((seasonality_name, tuple(seasonality_indexes)), )
+            seasonality_components = seasonality_components + (seasonality_tuple)
+
+
+
+        additive_components = additive_components + (("seasonality", seasonality_components), )
+        X = torch.tensor(internal_data.values, dtype=torch.float32)
+        
+        return X, y, original_y, multiplicative_components, additive_components
+        
+    ########################################################################################################################
+    def __compute_cap(self, X_time, y):
+        '''
+        TODO: document
+        '''
+        time_lag=14
+
+        cap = torch.zeros_like(X_time)
+
+        for i in range(X_time.shape[0]):
+            if (i < X_time.shape[0] - time_lag):
+                cap[i] = torch.max(y[i:i+time_lag])
+                
+            else:
+                cap[i] = torch.max(y[i:])
+
+            # I'm not using the max function here because this
+            # may contain nan values, and I want to replace
+            # nan values at cap[i] with the non-nan values
+            # at cap[i-1]. The nan values appear from prediction
+            # where y has some unknown values
+            if not (cap[i] > cap[i-1]):
+                cap[i] = cap[i-1]
+
+        return cap
     ########################################################################################################################
     def __find_changepoint_positions(self, X_time, changepoint_num, changepoint_range, min_value = None, drop_first = True):
         '''
@@ -706,6 +849,7 @@ class Chronos:
         '''
         
         # Set the minimum value in case it is None
+
         if (min_value is None):
             min_value = X_time.min().item()
         
@@ -753,8 +897,8 @@ class Chronos:
                             is the number of changepoints
         '''
 
-        
-        A = torch.zeros((X_time.shape[0], len(changepoints)))
+        '''
+        A = torch.zeros((X_time.shape[0], changepoints.shape[0]))
 
         # For each row t and column j,
         # A(t, j) = 1 if X_time[t] >= changepoints[j]. i.e. if the current time 
@@ -764,7 +908,13 @@ class Chronos:
         for j in range(A.shape[1]):
             row_mask = (X_time >= changepoints[j])
             A[row_mask, j] = 1.0
-            
+        '''
+
+        #print(X_time.shape, changepoints.shape)
+        A = (X_time[:, None] > changepoints) * 1.0
+        #print(A.shape)
+        #mklasmklasklmasklm
+        
         
         return A
 
@@ -827,14 +977,18 @@ class Chronos:
             self -          [Chronos] A fitted Chronos model
             
         '''
+
         # Record the time-series named columns. We will use them a lot
         self.__time_col = time_col
         self.__target_col = target_col
+
+        
         
         self.__check_incoming_data_for_nulls(data, predictions=False)
 
         # Make a copy of the history
         self.history = data.copy()
+
         if (self.history[self.__time_col].dt.day_name().isin(["Sunday", "Saturday"]).any() == False):
             print("No weekends found in training data, will only consider Monday - Friday")
             self.__trained_on_weekend = False
@@ -843,13 +997,16 @@ class Chronos:
 
         
 
+        self.original_target = data[self.__target_col]
+        X, y, _, multiplicative_components, additive_components = self.__transform_data(data)
+        self.__cap = self.__compute_cap(X[:, 0], y)
+
         
-        X_time, X_dataframe, y = self.__transform_data(data)
         
         
         
 
-        number_of_valid_changepoints = int(X_time.shape[0] * self.__proportion_of_data_subject_to_changepoints)
+        number_of_valid_changepoints = int(X.shape[0] * self.__proportion_of_data_subject_to_changepoints)
         if (number_of_valid_changepoints < self.__number_of_changepoints):
             warnings.warn(f"Number of datapoints in range, {number_of_valid_changepoints}, is smaller than number of changepoints, {self.__number_of_changepoints}. Using {number_of_valid_changepoints} instead", RuntimeWarning)
             self.__number_of_changepoints = number_of_valid_changepoints
@@ -861,54 +1018,88 @@ class Chronos:
         
         # Find a set of evenly spaced changepoints in the training data, and 
         # buid a matrix describing the effect of the changepoints on each timepoint
-        self.__changepoints = self.__find_changepoint_positions(X_time, 
+        self.__changepoints = self.__find_changepoint_positions(X[:, 0], 
                                                                 self.__number_of_changepoints, 
                                                                 self.__proportion_of_data_subject_to_changepoints)
         
         
-        self.__trend_components = {}
-        self.__multiplicative_components = {}
-        self.__additive_components = {}
-        
-        
-        if (self.__method in chronos_utils.SUPPORTED_METHODS):  
+
+        if (self.__method in chronos_utils.OPTIMIZATION_BASED_METHODS):        # Optimization methods
             if (self.__method == "MLE"):
                 print("Employing Maximum Likelihood Estimation")
-                self.__model = self.__model_function
+                self.__model = self.__model_function2
                 self.__guide = self.__guide_MLE
                 self.__param_prefix = ""
                 
             elif (self.__method == "MAP"):
                 print("Employing Maximum A Posteriori")
-                self.__model = self.__model_function
+                self.__model = self.__model_function_SVI
                 self.__guide = AutoDelta(self.__model, init_loc_fn=init_to_feasible)
                 self.__param_prefix  = "AutoDelta."
-                
             elif (self.__method == "SVI"):
                 print("Employing Stochastic Variational Inference")
-                self.__model = self.__model_function
+                self.__model = self.__model_function_SVI
                 self.__guide = AutoGuideList(self.__model)
 
-                columns_for_delta_distribution = ["delta", "sigma", "rate", "df", "intercept", "trend_slope"]
-                self.__guide.append(AutoNormal(pyro.poutine.block(self.__model, hide=columns_for_delta_distribution), init_scale=0.01))
-                self.__guide.append(AutoDelta(pyro.poutine.block(self.__model, expose=columns_for_delta_distribution), init_loc_fn=init_to_feasible))
+                columns_to_hide_from_autoguide = ["delta", "capacity"]
+
+                # Everything except for the changepoint values comes from a normal
+                # distribution prior
+                self.__guide.append(AutoNormal(pyro.poutine.block(self.__model, hide=columns_to_hide_from_autoguide), init_scale=0.1))
+
+                # Changepoints come from a Laplace distribution prior
+                # to make sure they are sparse
+                self.__guide.append(self.__guide_Laplace_deltas)
+
+                # The capacity comes from an exponential prior
+                # to make sure it is also sparse and positive
+                if (self.__trend_transformation == "logistic"):
+                    self.__guide.append(self.__guide_exponential_capacity)
+
+
+                
 
                 self.__param_prefix_normal = "AutoGuideList.0."
-                self.__param_prefix_delta = "AutoGuideList.1."
+                self.__param_name_delta = "means"
+                self.__param_name_capacity = "capacity_rate"
+                
 
-            self.__train_point_estimate(X_time,
-                                        X_dataframe,
+            self.__train_point_estimate(X,
+                                        multiplicative_components,
+                                        additive_components,
                                         y)
         elif (self.__method == "MCMC"):
+            
+            # TODO: the predictive intefrace via MCMC is a bit more complex
+            # since it uses all the posterior samples at once (unlike the guide
+            # which samples one possible scenario by one). Therefore, many vectors
+            # are suddenly returned as matrices and need some augmentation
+            # Consider revisiting dot products, especially between matrices and
+            # vectors
             raise NotImplementedError("Did not implement MCMC methods")
-        
+            print("Employing Markov Chain Monte Carlo")
 
+            self.__model = self.__model_function2
+
+            self.__kernel = NUTS(self.__model,
+                                 max_tree_depth=7)
+            self.__sampler = MCMC(kernel=self.__kernel,
+                                  num_samples=self.__number_of_iterations,
+                                  warmup_steps=self.__number_of_iterations//10)
+
+            self.__sampler.run(X_time, X_dataframe, y)
+
+            
+            
+        
+        
         return self
             
     
     ########################################################################################################################
-    def __train_point_estimate(self, X_time, X_dataframe, y):
+    def __train_point_estimate(self, X, multiplicative_components, additive_components, y):
         '''
+            TODO: UPDATE DOCUMENTATION
             A function which takes in the model and guide to use for
             the training of point estimates of the parameters, as well as
             the regressor tensors, the changepoint matrix, and the target,
@@ -938,15 +1129,19 @@ class Chronos:
         # Use a decaying optimizer which starts with a given learning
         # rate, but then slowly drops it to take smaller and smaller
         # steps
-        optimizer = Rprop
-        scheduler = pyro.optim.ExponentialLR({'optimizer': optimizer, 
-                                              'optim_args': {'lr': self.__learning_rate}, 
-                                              'gamma': 0.9})
+        
+        optimizer = Adam 
+        scheduler = ExponentialLR({'optimizer': optimizer, 
+                                   'optim_args': {'lr': self.__learning_rate}, 
+                                   'gamma': 0.5})
         
         # Use the ELBO (evidence lower bound) loss function
         # and Stochastic Variational Inference optimzation
         # technique
-        my_loss = Trace_ELBO()
+        my_loss = JitTrace_ELBO(ignore_jit_warnings=False)
+        my_loss = Trace_ELBO() #TODO: figure out JitTrace_ELBO. Basically I need to either conver the order of 
+                            # arguments for the model, based on https://pyro.ai/examples/jit.html
+                            # or make everything into tensors
         self.svi_ = SVI(self.__model, 
                         self.__guide, 
                         scheduler, 
@@ -963,33 +1158,49 @@ class Chronos:
         
         # Create a predictive object to predict for us for
         # metric reporting purposes
+
+        if (self.__method == "SVI"):
+            predictive_sample_number = 10
+        else:
+            predictive_sample_number = 1
         predictive = Predictive(model=self.__model,
                                 guide=self.__guide,
-                                num_samples=1,
-                                return_sites=("_RETURN",)) 
+                                num_samples=predictive_sample_number,
+                                return_sites=("trend", "_RETURN")) 
         
         # Iterate through the optimization
+        # Have to convert lists to tuples so they are hashable for
+        # the JIT compiler
         for step in range(self.__number_of_iterations):
-            
-            loss = self.svi_.step(X_time, 
-                                  X_dataframe, 
-                                  y)
+            loss = self.svi_.step(X, 
+                                  y,
+                                  multiplicative_components = multiplicative_components, 
+                                  additive_components = additive_components)
 
             # After calculating the loss, normalize by the 
             # number of points
+
+            
             loss = round(loss/y.shape[0], 4)
 
             
             
+            
             # If required, print out the results
             if (step % print_interval == 0):
+                
                 pct_done = round(100*(step+1)/self.__number_of_iterations, 2)
 
                 # If we're reporting, grab samples for the predictions
-                samples = predictive(X_time, 
-                                     X_dataframe)
+
                 
-                y_pred = samples["_RETURN"].detach().numpy()[0]
+                samples = predictive(X, 
+                                     None,
+                                     multiplicative_components=multiplicative_components, 
+                                     additive_components=additive_components)
+                
+                
+                y_pred = samples["_RETURN"].detach().numpy().mean(axis=0)
                 if (self.__y_max is not None):
                     y_pred *= self.__y_max
                 
@@ -1005,7 +1216,51 @@ class Chronos:
         pct_done = 100.0
         print(" "*100, end="\r")
         print(f"{pct_done}% - ELBO loss: {loss} | Mean Absolute Error: {mean_absolute_error_loss}")
+        
+        self.__compute_changepoint_posterior()
+
             
+    ########################################################################################################################
+    def __compute_changepoint_posterior(self):
+        '''
+        TODO: document
+        '''
+
+        print("Computing changepoint scale distribution...")
+        changepoint_values = self.changepoints_values
+
+        if (self.__method in chronos_utils.PRIOR_BASED_METHODS):
+
+            my_sampler = NUTS(self.__changepoint_model)
+            my_mcmc = MCMC(kernel=my_sampler,
+                        num_samples=1000,
+                        warmup_steps=200,
+                        disable_progbar=True)
+
+            my_mcmc.run(changepoint_values)
+
+            self.__changepoint_posterior_scale = my_mcmc.get_samples()["changepoint_scale"].detach().numpy()
+
+        else:
+            self.__changepoint_posterior_scale = np.array([changepoint_values.abs().mean().detach().numpy()])
+        print("Done")
+    ########################################################################################################################
+    def __changepoint_model(self, changepoint_values):
+        '''
+        # TODO: document
+        '''
+
+        scale_prior_distribution = dist.Exponential(1.0/self.__changepoint_prior_scale)
+        scale = pyro.sample("changepoint_scale", scale_prior_distribution)
+
+
+        changepoint_distribution = dist.Laplace(0.0, scale)
+
+        with pyro.plate("data", changepoint_values.size(0)):
+            pyro.sample("changepoint_obs", changepoint_distribution, obs=changepoint_values)
+
+
+    ########################################################################################################################
     ########################################################################################################################
     def __add_future_changepoints(self, past_deltas, future_trend_period):
         '''
@@ -1044,12 +1299,11 @@ class Chronos:
         
 
         # Infer future changepoint scale
-        future_laplace_scale = torch.abs(past_deltas).mean()
-
-
+        future_laplace_scale = np.random.choice(self.__changepoint_posterior_scale)
+        
         if (future_laplace_scale > 0.0):
             changepoint_dist = torch.distributions.Laplace(0, future_laplace_scale)
-        
+
             # The future changepoints can be any value from the
             # inferred Laplace distribution
             future_deltas = changepoint_dist.sample((extra_changepoint_num,))
@@ -1059,7 +1313,16 @@ class Chronos:
 
         # Combine the past change rates as 
         # well as future ones
-        deltas = torch.cat([past_deltas, future_deltas])
+        #print(past_deltas.shape)
+        #print(future_deltas.shape)
+
+        #print(len(past_deltas.shape) == len(future_deltas.shape))
+
+        if (self.__method == "MCMC"):
+            if not (len(past_deltas.shape) == len(future_deltas.shape)):
+                future_deltas = future_deltas.repeat((past_deltas.shape[0], 1))
+                #print(future_deltas.shape)
+        deltas = torch.cat([past_deltas, future_deltas], dim=-1)
 
         
         return deltas
@@ -1106,8 +1369,10 @@ class Chronos:
         future_raw_value = (X_time.max() - 1.0)
         future_seconds_number = int(future_raw_value * (self.__history_max_time_seconds - self.__history_min_time_seconds))
         
-        
-        deltas = self.__add_future_changepoints(past_deltas, future_seconds_number)
+        if (future_seconds_number > 0):
+            deltas = self.__add_future_changepoints(past_deltas, future_seconds_number)
+        else:
+            deltas = past_deltas
 
         
         # Count the number of future changepoints simulated
@@ -1157,7 +1422,7 @@ class Chronos:
                             slope_init -        [float] The value of the initial
                                                 slope 
         '''
-        if (method in ["MAP", "SVI"]):
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
             # Define paramters for the constant and slope
             intercept_init = pyro.sample("intercept", 
                                          dist.Normal(0.0, 10.0))
@@ -1170,6 +1435,21 @@ class Chronos:
                                     torch.tensor(0.0))
         
         return intercept_init, slope_init
+    ########################################################################################################################
+    def __sample_capacity(self, method):
+        '''
+        TODO: document
+        '''
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
+            # Define paramters for the constant and slope
+            rate = 1/self.__cap_prior_scale
+            capacity = pyro.sample("capacity", dist.Exponential(rate))
+        elif (method == "MLE"):
+            capacity = pyro.param("capacity", 
+                                  torch.tensor(self.__cap_prior_scale),
+                                  constraint=constraints.positive)
+        
+        return capacity
     ########################################################################################################################
     def __sample_past_slope_changes(self, method):
         '''
@@ -1188,12 +1468,13 @@ class Chronos:
             past_deltas -   [tensor] A tensor of the slope changes for the
                             trend component.
         '''
-        if (method in ["MAP", "SVI"]):
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
             # sample from a Laplace distribution
             means = torch.zeros(self.__number_of_changepoints)
             scales = torch.full((self.__number_of_changepoints, ), self.__changepoint_prior_scale)
 
             slope_change_laplace_distribution = dist.Laplace(means, scales).to_event(1)
+            #slope_change_laplace_distribution = dist.Normal(means, scales).to_event(1)
 
             past_deltas = pyro.sample("delta", slope_change_laplace_distribution)
         elif (method == "MLE"):            
@@ -1201,6 +1482,7 @@ class Chronos:
                                      torch.zeros(self.__number_of_changepoints))
         
         return past_deltas
+    ########################################################################################################################
     ########################################################################################################################
     def __sample_seasonalities_coefficients(self, method, seasonality_component, seasonality_name):
         '''
@@ -1227,7 +1509,7 @@ class Chronos:
                                 components. For a single seasonality these are
                                 coefficients for a pair of sine-cosine fourier terms
         '''
-        if (method in ["MAP", "SVI"]):
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
             # sample from a normal distribution
             means = torch.zeros(seasonality_component.size(1))
             standard_deviations = torch.full((seasonality_component.size(1),), 10.0)
@@ -1267,7 +1549,7 @@ class Chronos:
             betas_regressors -      [tensor] A tensor of the coefficients for the 
                                     additional regressor components. 
         '''
-        if (method in ["MAP", "SVI"]):
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
             means = torch.zeros(regressor_compoents.size(1))
             standard_deviations = torch.full((regressor_compoents.size(1),), 10.0)
 
@@ -1283,7 +1565,42 @@ class Chronos:
         return betas_regressors
 
     ########################################################################################################################
+    def __guide_exponential_capacity(self, X_time, X_dataframe, y=None):
+        '''
+        TODO: document
+        '''
+
+        rate = pyro.param("capacity_rate", torch.tensor(2.0), constraint=constraints.positive)
+        shape = pyro.param("capacity_shape", torch.tensor(2.0), constraint=constraints.positive)
+        #capacity = pyro.sample("capacity", dist.HalfCauchy(rate))
+        #capacity = pyro.sample("capacity", dist.Exponential(rate))
+        capacity = pyro.sample("capacity", dist.Gamma(shape, rate))
+
     ########################################################################################################################    
+    def __guide_Laplace_deltas(self, X, y=None, multiplicative_components=(), additive_components=()):
+        '''
+        TODO: document
+
+
+        This function acts as a simple guide over the "delta" 
+        learnable distribution. It is designed to be used in the
+        SVI learning context.
+
+        It only has a sample statement to match the "delta"
+        learnable distribution (which is meant to be a Laplace
+        distribution)
+        '''
+        
+        means = pyro.param("means", 
+                           torch.zeros(self.__number_of_changepoints))
+
+        scales = pyro.param("scales", 
+                            torch.full((self.__number_of_changepoints, ), 0.05),
+                            constraint=constraints.positive)
+
+        slope_change_laplace_distribution = dist.Laplace(means, scales).to_event(1)
+
+        past_deltas = pyro.sample("delta", slope_change_laplace_distribution)
     ########################################################################################################################
     def __guide_MLE(self, X_time, X_dataframe, y=None):
         '''
@@ -1314,6 +1631,72 @@ class Chronos:
         pass
     
     ########################################################################################################################
+    def __predict_beta_likelihood(self, method, mu, y):
+        '''
+            A function which takes up the expected values and employs them
+            to specify a Beta distribution, conditioned on the 
+            observed data.
+            An additional alpha value is registered as 
+            either a distribution or a parameter based on the method used
+
+            Parameters:
+            ------------
+
+            method -    [str] Which method is used. Either MAP
+                        or MLE
+            
+            mu -        [tensor] The expected values computed from
+                        the model paramters
+
+            y -         [tensor] The observed values
+            
+            Returns:
+            ------------
+            None
+        '''
+
+        mu = self.__double_softplus_transform(mu)
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
+            #alpha = pyro.sample("alpha", dist.HalfCauchy(1.0))
+            #beta = pyro.sample("beta", dist.HalfCauchy(1.0))
+            phi = pyro.sample("phi", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            #alpha = pyro.param("alpha", 
+            #                   torch.tensor(1.0), 
+            #                   constraint = constraints.positive)
+            phi = pyro.param("phi", 
+                             torch.tensor(1.0), 
+                             constraint = constraints.positive)
+            #beta = pyro.param("beta", 
+            #                   torch.tensor(1.0), 
+            #                   constraint = constraints.positive)
+
+        
+         
+
+        ####  mu = alpha/(alpha+beta)
+        
+        #alpha = -mu*beta/(mu - 1)
+        #alpha = torch.nn.functional.softplus(alpha, beta=100)
+
+        #beta = alpha/mu - alpha
+        #beta = beta.clamp(min=torch.finfo(torch.float32).eps)
+
+        #### https://storage.googleapis.com/plos-corpus-prod/10.1371/journal.pone.0140608/1/pone.0140608.s002.pdf?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=wombat-sa%40plos-prod.iam.gserviceaccount.com%2F20210906%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20210906T024123Z&X-Goog-Expires=86400&X-Goog-SignedHeaders=host&X-Goog-Signature=a732047699f9adfafb482f321a289b46dd7eae4c5da67a4d115bca3596423a0272e06b4bdcfb048f94fa05c4035beb5927230927d6bc6be9dee286e162b55ccd9d4e644784da378293e981f8b4077def00e2396bb378e18a9268374bbe7084fada5c3e0a8b2f083bd417bb2ffea57ea4c6ffe2a2a853dd70b871252dc904ae02e49eaf575abb692877b72aa23098b0c18093fbddbb4992de047a41bb31355403cc88408e25dac64811cd7e24d584f4f8bec6bf8c302befbf37aed4e17ebee0faf9c51ad014d5993caba3c27ed4d3524f8d3558acb385a4f339610dbe20024319b7188c433d9b7f5e03f6b4c674b19a4ac5110b03aae0f457d4bd22b0b455c7cf
+
+        alpha = mu * phi
+        beta = phi*(1 - mu)
+        
+        #print(alpha.max(), alpha.min())
+        #print(beta.max(), beta.min())
+        #print("*"*20)
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mu.size(0)):
+            pyro.sample("obs", dist.Beta(alpha, beta), obs=y)
     ########################################################################################################################
     def __predict_normal_likelihood(self, method, mu, y):
         '''
@@ -1342,7 +1725,7 @@ class Chronos:
         
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method in ["MAP", "SVI"]):
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
             sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
         elif (method == "MLE"):
             sigma = pyro.param("sigma", 
@@ -1386,23 +1769,24 @@ class Chronos:
 
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method in ["MAP", "SVI"]):
-            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
-            df = pyro.sample("df", dist.HalfCauchy(1.0))
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
+            #sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+            #df = pyro.sample("df", dist.HalfCauchy(60.0))
+            df = pyro.sample("df", dist.Gamma(10.0, 10.0))
         elif (method == "MLE"):
-            sigma = pyro.param("sigma", 
-                               torch.tensor(1.0), 
-                               constraint = constraints.positive)
+            #sigma = pyro.param("sigma", 
+            #                   torch.tensor(1.0), 
+            #                   constraint = constraints.positive)
 
             df = pyro.param("df", 
-                            torch.tensor(1.0), 
+                            torch.tensor(10.0), 
                             constraint = constraints.positive)
          
         # Finally sample from the likelihood distribution and
         # optionally condition on the observed values. 
         # If y is None, this simply samples from the distribution
         with pyro.plate("data", mu.size(0)):
-            pyro.sample("obs", dist.StudentT(df, mu, sigma), obs=y)
+            pyro.sample("obs", dist.StudentT(df, mu), obs=y)
 
         
     ########################################################################################################################
@@ -1433,17 +1817,19 @@ class Chronos:
 
         # Define additional paramters specifying the likelihood
         # distribution. 
-        if (method in ["MAP", "SVI"]):
-            rate = pyro.sample("rate", dist.HalfCauchy(1.0)).clamp(min=torch.finfo(torch.float32).eps)
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
+            rate = pyro.sample("rate", dist.Gamma(concentration=1.0, rate=1.0))
         elif (method == "MLE"):
             rate = pyro.param("rate", 
                               torch.tensor(1.0), 
                               constraint = constraints.positive)
 
         shape = rate * mu
+        #rate = shape/mu
+        #rate = rate.clamp(min=torch.finfo(torch.float32).eps)
          
         if (y is not None):
-            y_obs = y + torch.finfo(torch.float32).eps
+            y_obs = y + torch.finfo(torch.float64).eps
         else:
             y_obs = y
         # Finally sample from the likelihood distribution and
@@ -1453,6 +1839,59 @@ class Chronos:
             pyro.sample("obs", dist.Gamma(concentration=shape, rate=rate), obs=y_obs)
 
         
+    ########################################################################################################################
+    def __predict_log_normal_likelihood(self, method, mean, y):
+        '''
+            TODO: update to lognormal documentation
+            A function which takes up the expected values and employs them
+            to specify a gamma distribution, conditioned on the 
+            observed data.
+            An additional rate value is registered as either a distribution 
+            or a parameter based on the method used, and a shape tensor
+            is computed based on the rate and mu.
+
+            Parameters:
+            ------------
+
+            method -    [str] Which method is used. Either MAP
+                        or MLE
+            
+            mu -        [tensor] The expected values computed from
+                        the model paramters
+
+            y -         [tensor] The observed values
+            
+            Returns:
+            ------------
+            None
+        '''
+
+        # Define additional paramters specifying the likelihood
+        # distribution. 
+        if (method in chronos_utils.PRIOR_BASED_METHODS):
+            #sigma = pyro.sample("sigma", dist.Gamma(concentration=1.0, rate=1.0))
+            sigma = pyro.sample("sigma", dist.HalfCauchy(1.0))
+        elif (method == "MLE"):
+            sigma = pyro.param("sigma", 
+                              torch.tensor(1.0), 
+                              constraint = constraints.positive)
+            
+
+        mu = torch.log(mean) - (sigma**2)/2
+        
+         
+        if (y is not None):
+            y_obs = y + torch.finfo(torch.float64).eps
+        else:
+            y_obs = y
+
+
+        # Finally sample from the likelihood distribution and
+        # optionally condition on the observed values. 
+        # If y is None, this simply samples from the distribution
+        with pyro.plate("data", mean.size(0)):
+            pyro.sample("obs", dist.LogNormal(loc=mu, scale=sigma), obs=y_obs)
+
     ########################################################################################################################
     ########################################################################################################################    
     def __predict_likelihood(self, method, distribution, mu, y):
@@ -1485,10 +1924,15 @@ class Chronos:
             self.__predict_studentT_likelihood(method, mu, y)
         elif (distribution == chronos_utils.Gamma_dist_code):
             self.__predict_gamma_likelihood(method, mu, y)
+        elif (distribution == chronos_utils.LogNormal_dist_code):
+            self.__predict_log_normal_likelihood(method, mu, y)
+        elif (distribution == chronos_utils.Beta_dist_code):
+            self.__predict_beta_likelihood(method, mu, y)
         
     ########################################################################################################################
     def __compute_changepoint_positions_and_values(self, X_time, y):
         '''
+            TODO: document kappas
             A function which finds the position of changepoints in the time
             frame provided, and samples their values. If unobserved time
             frame is provided (prediction), also simulated future
@@ -1513,7 +1957,7 @@ class Chronos:
         # prediction mode. Therefore, we have to generate possible scenarios
         # for the future changepoints as a simulation
         if (y is None):
-            deltas, future_changepoints = self.__simulate_potential_future(X_time, past_deltas)            
+            deltas, future_changepoints = self.__simulate_potential_future(X_time, past_deltas)
             combined_changepoints = torch.cat([self.__changepoints, future_changepoints])            
         else:
             # If we are not in prediction mode, we only care about learning the past
@@ -1521,6 +1965,42 @@ class Chronos:
             combined_changepoints = self.__changepoints
 
         return deltas, combined_changepoints
+    ########################################################################################################################
+    def __double_softplus_transform(self, x, beta=100):
+        # TODO document
+        y1 = torch.nn.functional.softplus(x, beta=beta)
+        y2 = -torch.nn.functional.softplus(-(x-1), beta=beta) + 1
+
+        return torch.where(x > 0.5, y2, y1) + torch.finfo(torch.float64).eps
+
+    ########################################################################################################################
+    def __sigmoid_transform(self, x):
+        # TODO document
+        result = torch.sigmoid(x)
+        #print(result)
+        #exit()
+        return result           # There is no need for a cap here, y is caled to be between 0.0 - 1.0
+                                # We need max cap similar to what we do with trend changes
+    ########################################################################################################################
+    def __exp_transform(self, x):
+        # TODO document
+        return torch.exp2(x) # this is 2^x instead of e^x
+    ########################################################################################################################
+    def __positive_transform(self, x):
+        # TODO: document
+        return torch.nn.functional.softplus(x, beta=100)
+    ########################################################################################################################
+    def __identity_transform(self, x):
+        # TODO: document
+        return x
+    ########################################################################################################################
+    def __compute_intercept_adujstments(self, deltas, combined_changepoints):
+        '''
+        TODO: document
+        '''
+        
+        intercept_adjustments = -deltas * combined_changepoints
+        return intercept_adjustments
     ########################################################################################################################
     def __compute_trend(self, X_time, y):
         '''
@@ -1544,24 +2024,38 @@ class Chronos:
 
 
         intercept_init, slope_init = self.__sample_initial_slope_and_intercept(self.__method)
+        
+        
 
         deltas, combined_changepoints = self.__compute_changepoint_positions_and_values(X_time, y)
+        
+        
         A = self.__make_A_matrix(X_time, combined_changepoints)
 
 
         # To adjust the rates we also need to adjust the displacement during each rate change
-        intercept_adjustments = -deltas * combined_changepoints
+        #intercept_adjustments = -deltas * combined_changepoints
+    
+
+        intercept_adjustments = self.__compute_intercept_adujstments(deltas, combined_changepoints)
 
         # There is a unique slope value and intercept value for each
         # timepoint to create a piece-wise function
-        slope = slope_init + torch.matmul(A, deltas)
-        intercept = intercept_init + torch.matmul(A, intercept_adjustments)
+        slope = slope_init + torch.matmul(A, deltas) 
+        intercept = intercept_init + torch.matmul(A, intercept_adjustments) 
+
 
         # Finally compute the trend component and record it in the global
         # parameter store using the pyro.deterministic command
+        
         trend = slope * X_time + intercept
-        if (self.__make_likelihood_mean_positive == True):
-            trend = torch.nn.functional.softplus(trend, beta=100)
+
+        trend = self.__trend_transform_function(trend)
+
+        if (self.__trend_transformation == "logistic"):
+            capacity = self.__sample_capacity(self.__method)
+            trend = (1.0 + capacity) * trend
+            pyro.deterministic('max_capacity', (1.0 + capacity))
 
         pyro.deterministic('trend', trend)
 
@@ -1707,8 +2201,11 @@ class Chronos:
         return multiplicative_regressors_product
 
     ########################################################################################################################    
-    def __compute_multiplicative_component(self, X_dataframe):
+    def __compute_multiplicative_component(self, X, multiplicative_components):
         '''
+            TODO:
+            UPDATE DOCUMENTATION
+
             A function which looks at the data and computes all components that were
             labeled as multiplicative. The function computes the product of all 
             multiplicative seasonalities, then the product of all multiplicative
@@ -1725,15 +2222,33 @@ class Chronos:
                                         multiplicative component of the model
         '''
 
-        X_date = X_dataframe[self.__time_col]
 
-        multiplicative_seasonalities_product = self.__compute_multiplicative_seasonalities_product(X_date)
 
-        multiplicative_regressors_product = self.__compute_multiplicative_regressors_product(X_dataframe)
+        multiplicative_tensor = torch.ones(X.size(0))
+        
 
-        multiplicative_component = multiplicative_seasonalities_product * multiplicative_regressors_product
 
-        return multiplicative_component
+        for component_family in multiplicative_components:
+            component_type = component_family[0]
+            if component_type == 'seasonality':
+                components = component_family[1]
+                for component in components:
+                    seasonality_name = component[0]
+                    seasonality_indexes = component[1]
+
+                    seasonality_tensor = X[:, seasonality_indexes]
+
+
+                    betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, 
+                                                                                 seasonality_tensor, 
+                                                                                 seasonality_name)
+                    
+                    X_seasonality = seasonality_tensor.matmul(betas_seasonality)
+
+                    multiplicative_tensor = multiplicative_tensor * (1+X_seasonality)
+
+
+        return multiplicative_tensor
 
     ########################################################################################################################
     def __compute_additive_seasonalities_sum(self, X_date):
@@ -1803,8 +2318,10 @@ class Chronos:
 
         return additive_regressors_sum
     ########################################################################################################################
-    def __compute_additive_component(self, X_dataframe):
+    def __compute_additive_component(self, X, additive_components):
         '''
+            TODO:
+            UPDATE DOCUMENATION
             A function which looks at the data and computes all components that were
             labeled as additive. The function computes the sum of all 
             additive seasonalities, then the sum of all additive
@@ -1821,17 +2338,67 @@ class Chronos:
                                     additive component of the model
         '''
 
-        X_date = X_dataframe[self.__time_col]
+        #X_date = X_dataframe[self.__time_col]
 
-        additive_seasonalities_sum = self.__compute_additive_seasonalities_sum(X_date)
 
-        additive_regressors_sum = self.__compute_additive_regressors_sum(X_dataframe)
+        additive_tensor = torch.zeros(X.size(0))
 
-        additive_component = additive_seasonalities_sum + additive_regressors_sum
 
-        return additive_component
+        for component_family in additive_components:
+            component_type = component_family[0]
+            if component_type == 'seasonality':
+                components = component_family[1]
+                for component in components:
+                    seasonality_name = component[0]
+                    seasonality_indexes = component[1]
+
+                    seasonality_tensor = X[:, seasonality_indexes]
+
+
+                    betas_seasonality = self.__sample_seasonalities_coefficients(self.__method, 
+                                                                                 seasonality_tensor, 
+                                                                                 seasonality_name)
+                    
+                    X_seasonality = seasonality_tensor.matmul(betas_seasonality)
+
+                    additive_tensor = additive_tensor + X_seasonality
+
+        return additive_tensor
     ########################################################################################################################    
-    def __model_function(self, X_time, X_dataframe, y=None):
+    ########################################################################################################################    
+    ########################################################################################################################    
+    ########################################################################################################################    
+    ########################################################################################################################    
+    ########################################################################################################################    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def __model_function_SVI(self, 
+                         X, 
+                         y, 
+                         multiplicative_components=(), 
+                         additive_components=()):
         '''
             The major powerhouse function of this object, performs the modeling of
             the generative process which generates y from X_dataframe and X_time.
@@ -1862,6 +2429,11 @@ class Chronos:
                             and the learned parameters. 
         '''
 
+        #X = torch.tensor(X, dtype=torch.float32)
+        #if y is not None:
+        #    y = torch.tensor(y, dtype=torch.float32)
+
+        
         prediction_mode = y is None
         if (prediction_mode):
             # Poor man's verbose printing of prediction number
@@ -1871,30 +2443,252 @@ class Chronos:
                     print(f"Prediction no: {self.predict_counter_}", end="\r")
 
 
-        trend = self.__compute_trend(X_time, y)
+        
+        trend = self.__compute_trend(X[:, 0], y)
 
-        multiplicative_component = self.__compute_multiplicative_component(X_dataframe)
-
-        additive_component = self.__compute_additive_component(X_dataframe)
-
-
+        multiplicative_component = self.__compute_multiplicative_component(X, 
+                                                                           multiplicative_components)
+        additive_component = self.__compute_additive_component(X, 
+                                                               additive_components)
 
         mu = (trend * multiplicative_component) + additive_component
 
-        if (self.__make_likelihood_mean_positive == True):
+        
+        #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+        if (self.__trend_transformation == "logistic"):
+            mu = self.__double_softplus_transform(mu, beta=200)
+        elif (self.__make_likelihood_mean_positive == True):
+            #print(trend[0].detach().numpy(), mu[0].detach().numpy())
             mu = torch.nn.functional.softplus(mu, beta=100)
-            mu = mu + torch.finfo(torch.float32).eps
+            #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+            mu = mu + torch.finfo(torch.float64).eps
+
+        
 
 
-        # Sample observations based on the appropriate distribution
+        
+        #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+        #print("*****")
+
+        
+        pyro.deterministic('mu', mu)
+
+
+
+        # Sample observations based on the appropriate distribution if we are optimizing
+        
+        
         self.__predict_likelihood(self.__method, 
                                   self.__y_likelihood_distribution, 
                                   mu,
                                   y)
 
+
+        
         return mu
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        ######################################################################################################
+        ######################################################################################################
+        ######################################################################################################
+        ######################################################################################################
+        ######################################################################################################
+
+
+    def __model_function(self, 
+                         X, 
+                         y, 
+                         multiplicative_components=(), 
+                         additive_components=()):
+        '''
+            The major powerhouse function of this object, performs the modeling of
+            the generative process which generates y from X_dataframe and X_time.
+            Returns the expected values given the regressors and the learned 
+            parameters.
+
+
+            Parameters:
+            ------------
+            X_time -        [tensor] A tensor of time values, normalized. If
+                            we are training, this will contain values between 0.0
+                            and 1.0. Otherwise, it will contain values normalized to
+                            reflect the range of the training data (i.e. from 1.0 unward
+                            if it contains only future times, and from 0.0 to 1.0 and 
+                            unward if it contains both past and future times).
+
+            X_dataframe -   [pd.DataFrame] A pandas dataframe which contains the
+                            raw data passed into this Chronos object. Used to
+                            compute seasonality and additional regressors
+
+            y -             [tesnor] A tensor of the observaed values, normalized to
+                            the range 0.0 - 1.0, if we are training, or a None object
+                            if we are predicting.
+
+            Returns:
+            ------------
+            mu -            [tensor] A tensor of the expected values given X_dataframe
+                            and the learned parameters. 
+        '''
+
+        #X = torch.tensor(X, dtype=torch.float32)
+        #if y is not None:
+        #    y = torch.tensor(y, dtype=torch.float32)
+
+        
+        prediction_mode = y is None
+        if (prediction_mode):
+            # Poor man's verbose printing of prediction number
+            if (self.__prediction_verbose == True):
+                self.predict_counter_ += 1
+                if (self.predict_counter_ > 0):
+                    print(f"Prediction no: {self.predict_counter_}", end="\r")
+
+
+
+        
+        trend = self.__compute_trend(X[:, 0], y)
+
+        
+        multiplicative_component = self.__compute_multiplicative_component(X, 
+                                                                           multiplicative_components)
+
+        
+        additive_component = self.__compute_additive_component(X, 
+                                                               additive_components)
+
+        
+        
+        mu = (trend * multiplicative_component) + additive_component
+
+        
+
+
+        
+        #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+        if (self.__trend_transformation == "logistic"):
+            mu = self.__double_softplus_transform(mu, beta=200)
+        elif (self.__make_likelihood_mean_positive == True):
+            #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+            mu = torch.nn.functional.softplus(mu, beta=100)
+            #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+            mu = mu + torch.finfo(torch.float64).eps
+
+        
+
+
+        
+        #print(trend[0].detach().numpy(), mu[0].detach().numpy())
+        #print("*****")
+
+        
+        pyro.deterministic('mu', mu)
+
+
+
+        # Sample observations based on the appropriate distribution if we are optimizing
+        
+        
+        self.__predict_likelihood(self.__method, 
+                                  self.__y_likelihood_distribution, 
+                                  mu,
+                                  y)
+
+
+        
+        return mu
+
+
+    ########################################################################################################################
+    def return_potential_futures(self, future_df, future_number):
+        self.predict_counter_ = -2
+
+
+        # Transform data into trend and seasonality as before
+        X_time, X_dataframe, y, _ = self.__transform_data(future_df)
+
+
+        # For point estimates, use the predictive interface
+        if (self.__method in chronos_utils.OPTIMIZATION_BASED_METHODS):
+            # https://pyro.ai/examples/bayesian_regression.html#Model-Evaluation
+            predictive = Predictive(model=self.__model,
+                                    guide=self.__guide,
+                                    num_samples=future_number,
+                                    return_sites=("obs", "trend", "mu")) 
+
+            
+            samples = predictive(X_time, 
+                                 X_dataframe)
+        elif (self.__method == "MCMC"):
+            
+            predictive = Predictive(model=self.__model,
+                                    posterior_samples=self.__sampler.get_samples(group_by_chain=True),
+                                    num_samples=future_number,
+                                    return_sites=("obs", "trend", "mu"))
+
+            samples = predictive(X_time, 
+                                 X_dataframe)
+        else:
+            raise NotImplementedError(f"Did not implement .predict for {self.__method}")
+
+        samples["y"] = y
+        samples["time"] = future_df[self.__time_col]
+
+        return samples
+
+    ########################################################################################################################
+    def __find_highest_density_interval(self, samples, ci_interval):
+        '''
+            TODO: document
+        '''
+        sorted_samples = np.sort(samples)
+
+        best_score = float("inf")
+        return_values = None
+        
+        
+        number_of_values_to_include = int(math.ceil(ci_interval * sorted_samples.shape[0]))
+        
+        
+        for value_a_index, value_a in enumerate(sorted_samples[:-number_of_values_to_include]):
+            value_b_index = value_a_index + number_of_values_to_include
+            
+            value_a = sorted_samples[value_a_index]
+            value_b = sorted_samples[value_b_index]
+
+            current_score = value_b - value_a
+            if (current_score < best_score):
+                best_score = current_score
+                return_values = (value_a, value_b)
+            
+        return return_values
     ########################################################################################################################
     def predict(self, 
                 future_df=None, 
@@ -1903,8 +2697,11 @@ class Chronos:
                 period=30, 
                 frequency='D', 
                 include_history=True,
+                return_samples=False,
                 verbose=True):
         '''
+            TODO: update documentation re: return_samples
+
             A function which accepts a dataframe with at least one column, the timestamp
             and employes the learned parameters to predict observations as well as 
             credibility intervals and uncertainty intervals.
@@ -1982,9 +2779,7 @@ class Chronos:
         '''
         
         
-        #for item in pyro.get_param_store():
-        #    print(item)
-        #assert(False)
+
         self.__prediction_verbose = verbose
         # Make a future dataframe if one is not provided
         if (future_df is None):            
@@ -1995,7 +2790,10 @@ class Chronos:
         self.__check_incoming_data_for_nulls(future_df, predictions=True)
 
         # Transform data into trend and seasonality as before
-        X_time, X_dataframe, y = self.__transform_data(future_df)
+        X, y, original_y, multiplicative_components, additive_components = self.__transform_data(future_df)
+        self.__cap = self.__compute_cap(X[:, 0], y)
+
+        #print(self.__cap)
         
 
         # For some reason the predictive method runs for 2 extra runs
@@ -2003,69 +2801,145 @@ class Chronos:
         # when to start printing out output
         self.predict_counter_ = -2
 
-        self.__trend_components = {}
-        self.__multiplicative_components = {}
-        self.__additive_components = {}
+        #self.__trend_components = {}
+        #self.__multiplicative_components = {}
+        #self.__additive_components = {}
 
         # For point estimates, use the predictive interface
-        if (self.__method in chronos_utils.SUPPORTED_METHODS):
+        if (self.__method in chronos_utils.OPTIMIZATION_BASED_METHODS):
             # https://pyro.ai/examples/bayesian_regression.html#Model-Evaluation
             predictive = Predictive(model=self.__model,
                                     guide=self.__guide,
                                     num_samples=sample_number,
-                                    return_sites=("obs", "trend")) 
+                                    return_sites=("obs", "trend", "mu", "max_capacity")) 
 
             
+            samples = predictive(X,
+                                 None,  
+                                 multiplicative_components, 
+                                 additive_components)
+        elif (self.__method == "MCMC"):
+            
+            predictive = Predictive(model=self.__model,
+                                    posterior_samples=self.__sampler.get_samples(group_by_chain=True),
+                                    num_samples=sample_number,
+                                    return_sites=("obs", "trend", "mu"))
+
             samples = predictive(X_time, 
                                  X_dataframe)
-            
-            
-            
-            # Calculate ntiles based on the CI provided. Each side should have
-            # CI/2 credibility
-            space_on_each_side = (1.0 - ci_interval)/2.0
-            lower_ntile = int(len(samples['obs']) * space_on_each_side)
-            upper_ntile = int(len(samples['obs']) * (1.0 - space_on_each_side))
-            
-            # The resulting tensor returns with (sample_number, 1, n_samples) shape
-            trend_array = samples['trend'].squeeze()
-
-            # Calculate uncertainty
-            trend = trend_array.mean(dim=0)
-            trend_upper = trend_array.max(dim=0).values
-            trend_lower = trend_array.min(dim=0).values
-
-            # Build the output dataframe
-            predictions = pd.DataFrame({"yhat": torch.mean(samples['obs'], 0).detach().numpy(),
-                                        "yhat_lower": samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
-                                        "yhat_upper": samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy(),
-                                        "trend": trend.detach().numpy(),
-                                        "trend_lower": trend_lower.detach().numpy(),
-                                        "trend_upper": trend_upper.detach().numpy()})
-            
-            
-            # Incorporate the original values, and build the column order to return
-            columns_to_return = []
-            
-            columns_to_return.append(self.__time_col)
-            predictions[self.__time_col] = future_df[self.__time_col]
-
-            if (y is not None):
-                predictions[self.__target_col] = y.detach().numpy()
-                columns_to_return.append(self.__target_col)
-
-            columns_to_return.extend(['yhat', 'yhat_upper', 'yhat_lower', 
-                                      'trend', 'trend_upper', 'trend_lower'])
-
-
-            predictions = predictions[columns_to_return]
-            numeric_columns = columns_to_return[1:]
-
-            if (self.__y_max is not None):
-                predictions[numeric_columns] *= self.__y_max
-            return predictions
         else:
             raise NotImplementedError(f"Did not implement .predict for {self.__method}")
+
+
+        #if (self.__trend_transformation == "logistic"):
+        #    samples['obs'] = self.__double_softplus_transform(samples['obs'], beta=400)
+        
+        
+        
+        observations_tensor = samples['obs'] 
+        trend_tensor = samples['trend'].squeeze()
+        mu_tensor = samples['mu'].squeeze()
+        if (self.__trend_transformation == "logistic"):
+            capacity_tensor = samples['max_capacity'].squeeze()
+
+        if (self.__y_max is not None):
+            observations_tensor *= self.__y_max
+            trend_tensor *= self.__y_max
+            mu_tensor *= self.__y_max
+            if (self.__trend_transformation == "logistic"):
+                capacity_tensor *= self.__y_max
+
+        # Calculate ntiles based on the CI provided. Each side should have
+        # CI/2 credibility
+        space_on_each_side = (1.0 - ci_interval)/2.0
+        lower_ntile = int(len(samples['obs']) * space_on_each_side)
+        upper_ntile = int(len(samples['obs']) * (1.0 - space_on_each_side))
+
+
+        
+        # The resulting tensor returns with (sample_number, 1, n_samples) shape
+        
+
+        # Calculate uncertainty
+        trend = trend_tensor.mean(dim=0)
+        trend_upper = trend_tensor.max(dim=0).values
+        trend_lower = trend_tensor.min(dim=0).values
+
+        if (self.__trend_transformation == "logistic"):
+            capacity = capacity_tensor.mean().repeat(X_time.shape[0])
+            capacity_upper = capacity_tensor.max().repeat(X_time.shape[0])
+            capacity_lower = capacity_tensor.min().repeat(X_time.shape[0])
+
+        
+        y_upper = []
+        y_lower = []
+
+
+        observations = observations_tensor.detach().numpy()
+
+        #print()
+        #print(f"Computing Highest Density {ci_interval * 100}% interval")
+        '''for i in range(observations.shape[1]):
+            print(i, end="\r")
+            time_step_observations = observations[:, i]
+            lower_value, upper_value = self.__find_highest_density_interval(time_step_observations, ci_interval)
+            y_upper.append(upper_value)
+            y_lower.append(lower_value)
+        '''
+        lower_and_upper_bounds = pyro.ops.stats.hpdi(observations_tensor, 0.95)
+        y_lower = lower_and_upper_bounds[0]
+        y_upper = lower_and_upper_bounds[1]
+        
+
+        # Build the output dataframe
+        predictions = pd.DataFrame({"yhat": torch.mean(samples['obs'], 0).detach().numpy(),
+                                    "yhat_lower": np.array(y_lower), #samples['obs'].kthvalue(lower_ntile, dim=0)[0].detach().numpy(),
+                                    "yhat_upper": np.array(y_upper), #samples['obs'].kthvalue(upper_ntile, dim=0)[0].detach().numpy(),
+                                    "trend": trend.detach().numpy(),
+                                    "trend_lower": trend_lower.detach().numpy(),
+                                    "trend_upper": trend_upper.detach().numpy()})
+        
+        if (self.__trend_transformation == "logistic"):
+            predictions["capacity"] = capacity.detach().numpy()
+            predictions["capacity_upper"] = capacity_upper.detach().numpy()
+            predictions["capacity_lower"] = capacity_lower.detach().numpy()
+        
+        
+        # Incorporate the original values, and build the column order to return
+        columns_to_return = []
+        
+        columns_to_return.append(self.__time_col)
+        predictions[self.__time_col] = future_df[self.__time_col]
+
+
+
+        if (y is not None):
+            #predictions[self.__target_col] = y.detach().numpy()
+            predictions[self.__target_col] = original_y.detach().numpy()
+            
+            if (self.__y_max is not None):
+                predictions[self.__target_col] *= self.__y_max
+
+            columns_to_return.append(self.__target_col)
+
+        
+
+        columns_to_return.extend(['yhat', 'yhat_upper', 'yhat_lower',
+                                  'trend', 'trend_upper', 'trend_lower'])
+        
+        if (self.__trend_transformation == "logistic"):
+            columns_to_return.extend(['capacity', 'capacity_upper', 'capacity_lower'])
+
+
+        predictions = predictions[columns_to_return]
+        numeric_columns = columns_to_return[1:]
+
+        if (return_samples == True):
+            return predictions, observations
+        else:
+            return predictions
+        #else:
+        #    raise NotImplementedError(f"Did not implement .predict for {self.__method}")
 
         
         
@@ -2215,6 +3089,8 @@ class Chronos:
             elif (self.__seasonality_mode == "mul"):
                 seasonality['Y'] = 100*(1.0 + seasonality['Y'])
             return seasonality
+
+
         elif (self.__method in chronos_utils.DISTRIBUTION_ESTIMATE_METHODS):
             if (seasonality_name == "weekly"):
                 seasonality = self.__get_weekly_seasonality_dist(f'{self.__param_prefix_normal}')
@@ -2234,7 +3110,8 @@ class Chronos:
                 seasonality['Y_upper'] = 100*(1.0 + seasonality['Y_upper'])
                 seasonality['Y_lower'] = 100*(1.0 + seasonality['Y_lower'])
             return seasonality
-            
+
+
         else:
             raise NotImplementedError("Did not implement weekly seasonality for non MAP non MLE")
     ########################################################################################################################
@@ -2313,73 +3190,6 @@ class Chronos:
         
         return weekly_seasonality
     ########################################################################################################################
-    def __get_weekly_seasonality_dist(self, param_name):
-        '''
-            TODO: update description
-            A function which accepts the name of the parameter where point estimates
-            of seasonalities are stored and returns a pandas dataframe containing
-            the data for the weekly seasonality as well axis labels
-
-            Parameters:
-            ------------
-            param_name -            [str] The name of the pyro parameter store where the 
-                                    point estimates are stored
-
-            
-            Returns:
-            ------------
-            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
-                                    columns:
-                                    
-                                    X -     The values for the weekly seasonality (0-6)
-                                    Label - The labels for the days ("Monday" - "Sunday")
-                                    Y -     The seasonal response for each day
-        '''
-
-        
-        # Get the parameter pairs of coefficients
-        weekly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_weekly"))
-        weekly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_weekly"))
-        
-        #print(weekly_params_loc)
-        #print(weekly_params_scales)
-
-        weekly_param_sampled_values = dist.Normal(weekly_params_loc, 
-                                                  weekly_params_scales).sample((1000,)).detach().numpy()
-        
-
-        
-        
-        # Monday is assumed to be 0
-        weekdays_numeric = np.arange(0, 7, 1)
-        weekdays = chronos_utils.weekday_names_
-        if (self.__trained_on_weekend == False):
-            weekdays_numeric = weekdays_numeric[:-2]
-            weekdays = weekdays[:-2]
-
-        # Compute seasonal response
-        seasonality_array = np.zeros((weekly_param_sampled_values.shape[0], 
-                                      weekdays_numeric.shape[0]))
-
-        for i in range(weekly_param_sampled_values.shape[0]):
-            seasonality_array[i, :] = self.__compute_seasonality(weekly_param_sampled_values[i], 
-                                                                 weekdays_numeric, 
-                                                                 weekdays_numeric.shape[0])
-        seasonality = seasonality_array.mean(axis=0)
-        seasonality_max = seasonality_array.max(axis=0)
-        seasonality_min = seasonality_array.min(axis=0)
-
-        #print(seasonality)
-        # Package everything nicely into a df
-        weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
-                                           "Label": weekdays,
-                                           "Y": seasonality,
-                                           "Y_upper": seasonality_max,
-                                           "Y_lower": seasonality_min})
-        
-        return weekly_seasonality
-    ########################################################################################################################
-
     def __get_monthly_seasonality_point(self, param_name):
         '''
             A function which accepts the name of the parameter where point estimates
@@ -2415,64 +3225,6 @@ class Chronos:
         monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
                                             "Label": monthday_names,
                                             "Y": seasonality})
-        
-        return monthly_seasonality
-        ########################################################################################################################
-
-    def __get_monthly_seasonality_dist(self, param_name):
-        '''
-            TODO: update
-            A function which accepts the name of the parameter where point estimates
-            of seasonalities are stored and returns a pandas dataframe containing
-            the data for the monthly seasonality as well axis labels
-
-            Parameters:
-            ------------
-            param_name -            [str] The name of the pyro parameter store where the 
-                                    point estimates are stored
-
-            
-            Returns:
-            ------------
-            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
-                                    columns:
-                                    
-                                    X -     The values for the monthly seasonality (0-30)
-                                    Label - The labels for the days ("1st" - "31st")
-                                    Y -     The seasonal response for each day
-        '''
-
-        # Get the parameter pairs of coefficients
-        monthly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_monthly"))
-        monthly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_monthly"))
-
-
-        monthly_param_sampled_values = dist.Normal(monthly_params_loc, 
-                                                   monthly_params_scales).sample((1000,)).detach().numpy()
-
-        
-        monthdays_numeric = np.arange(0, 31, 1)
-        monthday_names = chronos_utils.monthday_names_
-
-        # Compute seasonal response
-        seasonality_array = np.zeros((monthly_param_sampled_values.shape[0], 
-                                      monthdays_numeric.shape[0]))
-
-        for i in range(monthly_param_sampled_values.shape[0]):
-            seasonality_array[i, :] = self.__compute_seasonality(monthly_param_sampled_values[i], 
-                                                                 monthdays_numeric, 
-                                                                 monthdays_numeric.shape[0])
-
-        seasonality = seasonality_array.mean(axis=0)
-        seasonality_max = seasonality_array.max(axis=0)
-        seasonality_min = seasonality_array.min(axis=0)
-            
-        # Package everything nicely into a df
-        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
-                                            "Label": monthday_names,
-                                            "Y": seasonality,
-                                            "Y_upper": seasonality_max,
-                                            "Y_lower": seasonality_min})
         
         return monthly_seasonality
 
@@ -2515,6 +3267,126 @@ class Chronos:
                                            "Y": seasonality})
         
         return yearly_seasonality
+    
+    ########################################################################################################################
+    def __get_weekly_seasonality_dist(self, param_name):
+        '''
+            TODO: update description
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the weekly seasonality as well axis labels
+            Parameters:
+            ------------
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
+            
+            Returns:
+            ------------
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
+                                    
+                                    X -     The values for the weekly seasonality (0-6)
+                                    Label - The labels for the days ("Monday" - "Sunday")
+                                    Y -     The seasonal response for each day
+        '''
+
+        
+        # Get the parameter pairs of coefficients
+        weekly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_weekly"))
+        weekly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_weekly"))
+        
+        #print(weekly_params_loc)
+        #print(weekly_params_scales)
+
+        weekly_param_sampled_values = dist.Normal(weekly_params_loc, 
+                                                  weekly_params_scales).sample((self.__seasonality_sample_number,)).detach().numpy()
+        
+
+        
+        
+        # Monday is assumed to be 0
+        weekdays_numeric = np.arange(0, 7, 1)
+        weekdays = chronos_utils.weekday_names_
+        if (self.__trained_on_weekend == False):
+            weekdays_numeric = weekdays_numeric[:-2]
+            weekdays = weekdays[:-2]
+
+        # Compute seasonal response
+        seasonality_array = np.zeros((weekly_param_sampled_values.shape[0], 
+                                      weekdays_numeric.shape[0]))
+
+        for i in range(weekly_param_sampled_values.shape[0]):
+            seasonality_array[i, :] = self.__compute_seasonality(weekly_param_sampled_values[i], 
+                                                                 weekdays_numeric, 
+                                                                 weekdays_numeric.shape[0])
+        seasonality = seasonality_array.mean(axis=0)
+        seasonality_max = seasonality_array.max(axis=0)
+        seasonality_min = seasonality_array.min(axis=0)
+
+        #print(seasonality)
+        # Package everything nicely into a df
+        weekly_seasonality = pd.DataFrame({"X": weekdays_numeric,
+                                           "Label": weekdays,
+                                           "Y": seasonality,
+                                           "Y_upper": seasonality_max,
+                                           "Y_lower": seasonality_min})
+        
+        return weekly_seasonality
+    ########################################################################################################################
+    def __get_monthly_seasonality_dist(self, param_name):
+        '''
+            TODO: update
+            A function which accepts the name of the parameter where point estimates
+            of seasonalities are stored and returns a pandas dataframe containing
+            the data for the monthly seasonality as well axis labels
+            Parameters:
+            ------------
+            param_name -            [str] The name of the pyro parameter store where the 
+                                    point estimates are stored
+            
+            Returns:
+            ------------
+            weekly_seasonality -    [DataFrame] A pandas dataframe containing three 
+                                    columns:
+                                    
+                                    X -     The values for the monthly seasonality (0-30)
+                                    Label - The labels for the days ("1st" - "31st")
+                                    Y -     The seasonal response for each day
+        '''
+
+        # Get the parameter pairs of coefficients
+        monthly_params_loc = torch.tensor(self.__get_seasonal_params(param_name+"locs.betas_monthly"))
+        monthly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_monthly"))
+
+
+        monthly_param_sampled_values = dist.Normal(monthly_params_loc, 
+                                                   monthly_params_scales).sample((self.__seasonality_sample_number,)).detach().numpy()
+
+        
+        monthdays_numeric = np.arange(0, 31, 1)
+        monthday_names = chronos_utils.monthday_names_
+
+        # Compute seasonal response
+        seasonality_array = np.zeros((monthly_param_sampled_values.shape[0], 
+                                      monthdays_numeric.shape[0]))
+
+        for i in range(monthly_param_sampled_values.shape[0]):
+            seasonality_array[i, :] = self.__compute_seasonality(monthly_param_sampled_values[i], 
+                                                                 monthdays_numeric, 
+                                                                 monthdays_numeric.shape[0])
+
+        seasonality = seasonality_array.mean(axis=0)
+        seasonality_max = seasonality_array.max(axis=0)
+        seasonality_min = seasonality_array.min(axis=0)
+            
+        # Package everything nicely into a df
+        monthly_seasonality = pd.DataFrame({"X": monthdays_numeric,
+                                            "Label": monthday_names,
+                                            "Y": seasonality,
+                                            "Y_upper": seasonality_max,
+                                            "Y_lower": seasonality_min})
+        
+        return monthly_seasonality
     ########################################################################################################################
     def __get_yearly_seasonality_dist(self, param_name):
         '''
@@ -2522,12 +3394,10 @@ class Chronos:
             A function which accepts the name of the parameter where point estimates
             of seasonalities are stored and returns a pandas dataframe containing
             the data for the yearly seasonality as well axis labels
-
             Parameters:
             ------------
             param_name -            [str] The name of the pyro parameter store where the 
                                     point estimates are stored
-
             
             Returns:
             ------------
@@ -2545,7 +3415,7 @@ class Chronos:
         yearly_params_scales = torch.tensor(self.__get_seasonal_params(param_name+"scales.betas_yearly"))
         
         yearly_param_sampled_values = dist.Normal(yearly_params_loc, 
-                                                  yearly_params_scales).sample((1000,)).detach().numpy()
+                                                  yearly_params_scales).sample((self.__seasonality_sample_number,)).detach().numpy()
 
 
         yeardays_numeric = np.arange(0, 366, 1)
@@ -2577,6 +3447,26 @@ class Chronos:
         return yearly_seasonality
     
     ########################################################################################################################
+    ########################################################################################################################
+    @property
+    def cap_value(self):
+        '''
+        TODO: document
+        '''
+        if (self.__trend_transformation == "logistic"):
+            if (self.__method in chronos_utils.POINT_ESTIMATE_METHODS):
+                cap = pyro.param(f"{self.__param_prefix}capacity")
+            else:
+                capacity_rate = pyro.param(self.__param_name_capacity)
+                cap = 1/capacity_rate
+                #cap = pyro.param(f"{self.__param_prefix_normal}capacity")
+                
+            result = (1.0 + cap) * self.__y_max
+            
+            return result.detach().numpy()
+        else:
+            return np.inf
+    ########################################################################################################################
     @property
     def changepoints_values(self):
         '''
@@ -2587,7 +3477,8 @@ class Chronos:
         if (self.__method in chronos_utils.POINT_ESTIMATE_METHODS):
             past_deltas = pyro.param(f"{self.__param_prefix}delta")
         else:
-            past_deltas = pyro.param(f"{self.__param_prefix_delta}delta")
+            #past_deltas = pyro.param(f"{self.__param_prefix_delta}delta")
+            past_deltas = pyro.param(self.__param_name_delta)
             
         return past_deltas
     ########################################################################################################################
