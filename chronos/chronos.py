@@ -1027,7 +1027,7 @@ class Chronos:
         if (self.__method in chronos_utils.OPTIMIZATION_BASED_METHODS):        # Optimization methods
             if (self.__method == "MLE"):
                 print("Employing Maximum Likelihood Estimation")
-                self.__model = self.__model_function2
+                self.__model = self.__model_function
                 self.__guide = self.__guide_MLE
                 self.__param_prefix = ""
                 
@@ -1228,6 +1228,10 @@ class Chronos:
 
         print("Computing changepoint scale distribution...")
         changepoint_values = self.changepoints_values
+
+        if (changepoint_values.shape[0] == 0):
+            self.__changepoint_posterior_scale = np.array([0.0])
+            return
 
         if (self.__method in chronos_utils.PRIOR_BASED_METHODS):
 
@@ -1602,7 +1606,11 @@ class Chronos:
 
         past_deltas = pyro.sample("delta", slope_change_laplace_distribution)
     ########################################################################################################################
-    def __guide_MLE(self, X_time, X_dataframe, y=None):
+    def __guide_MLE(self, 
+                    X, 
+                    y=None, 
+                    multiplicative_components=(), 
+                    additive_components=()):
         '''
             A function which specifies a special guide which does nothing.
             This guide is used in MLE optimization since there is no
