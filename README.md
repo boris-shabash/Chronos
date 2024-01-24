@@ -63,6 +63,6 @@ Prediction no: 1000
 
 ![alt text](images/Divvy_components.png)
 
-Notice we can specify the distribution of the ride shares to be a gamma distribution to ensure they are never negative. Additionally, we made the seasonality multiplicative to make sure that its affect increases as the absolute number of
+Notice we can specify the distribution of the ride shares to be a gamma distribution to ensure they are never negative. Additionally, we made the seasonality multiplicative to make sure that its effect increases as the absolute number of
 rides increases.
 
